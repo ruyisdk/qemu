@@ -3268,6 +3268,33 @@ static const TypeInfo riscv_cpu_type_infos[] = {
 #endif
     ),
 
+    /*
+     * The vendor xuantie-qemu-9.0 tree aliases C920 to the legacy-vector
+     * C910V model.  Keep the same inheritance shape as C910V until
+     * XTheadVector is available in this tree.
+     */
+    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_THEAD_C920, TYPE_RISCV_CPU_THEAD_C910V,
+    ),
+
+    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_THEAD_C920V2,
+                     TYPE_RISCV_CPU_THEAD_C910V2,
+        .misa_ext = RVV,
+        .vext_spec = VEXT_VERSION_1_00_0,
+
+        .cfg.ext_zve32f = true,
+        .cfg.ext_zvfbfmin = true,
+        .cfg.ext_zvfbfwma = true,
+        .cfg.ext_zvfh = true,
+    ),
+
+    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_THEAD_C920V3,
+                     TYPE_RISCV_CPU_THEAD_C920V2,
+        .priv_spec = PRIV_VERSION_1_13_0,
+
+        .cfg.ext_zimop = true,
+        .cfg.ext_zcmop = true,
+    ),
+
     DEFINE_RISCV_CPU(TYPE_RISCV_CPU_TT_ASCALON, TYPE_RISCV_VENDOR_CPU,
         .misa_mxl_max = MXL_RV64,
         .misa_ext = RVG | RVC | RVS | RVU | RVH | RVV,
