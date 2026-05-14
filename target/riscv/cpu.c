@@ -3105,6 +3105,16 @@ static const TypeInfo riscv_cpu_type_infos[] = {
         .misa_mxl_max = MXL_RV64,
     ),
 
+    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_SIFIVE_U74, TYPE_RISCV_CPU_SIFIVE_U,
+        .misa_mxl_max = MXL_RV64,
+        .priv_spec = PRIV_VERSION_1_12_0,
+
+        .cfg.ext_sscofpmf = true,
+        .cfg.ext_zba = true,
+        .cfg.ext_zbb = true,
+        .cfg.pmp_granularity = 4096,
+    ),
+
     DEFINE_RISCV_CPU(TYPE_RISCV_CPU_SHAKTI_C, TYPE_RISCV_CPU_SIFIVE_U,
         .misa_mxl_max = MXL_RV64,
     ),
