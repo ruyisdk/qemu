@@ -3194,7 +3194,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
     DEFINE_RISCV_CPU(TYPE_RISCV_CPU_THEAD_C910, TYPE_RISCV_VENDOR_CPU,
         .misa_mxl_max = MXL_RV64,
         .misa_ext = RVG | RVC | RVS | RVU,
-        .priv_spec = PRIV_VERSION_1_10_0,
+        .priv_spec = PRIV_VERSION_1_11_0,
 
         .cfg.ext_xtheadba = true,
         .cfg.ext_xtheadbb = true,
