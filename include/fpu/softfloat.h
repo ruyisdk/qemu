@@ -1252,6 +1252,8 @@ uint64_t float128_to_uint64_round_to_zero(float128, float_status *status);
 Int128 float128_to_uint128_round_to_zero(float128, float_status *status);
 uint32_t float128_to_uint32(float128, float_status *status);
 uint32_t float128_to_uint32_round_to_zero(float128, float_status *status);
+float16 float128_to_float16(float128, float_status *status);
+bfloat16 float128_to_bfloat16(float128, float_status *status);
 float32 float128_to_float32(float128, float_status *status);
 float64 float128_to_float64(float128, float_status *status);
 floatx80 float128_to_floatx80(float128, float_status *status);

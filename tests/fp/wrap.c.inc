@@ -257,6 +257,7 @@ WRAP_80_TO_SF(qemu_extF80M_to_f64, floatx80_to_float64, float64)
         return *(type##_t *)&ret;               \
     }
 
+WRAP_128_TO_SF(qemu_f128M_to_f16, float128_to_float16, float16)
 WRAP_128_TO_SF(qemu_f128M_to_f32, float128_to_float32, float32)
 WRAP_128_TO_SF(qemu_f128M_to_f64, float128_to_float64, float64)
 #undef WRAP_128_TO_SF

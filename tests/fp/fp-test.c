@@ -682,7 +682,7 @@ static void do_testfloat(int op, int rmode, bool exact)
                             qemu_f128M_to_i64_r_minMag, exact);
         break;
     case F128_TO_F16:
-        not_implemented();
+        test_a_f128_z_f16(slow_f128M_to_f16, qemu_f128M_to_f16);
         break;
     case F128_TO_F32:
         test_a_f128_z_f32(slow_f128M_to_f32, qemu_f128M_to_f32);

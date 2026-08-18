@@ -2688,6 +2688,22 @@ bfloat16 float64_to_bfloat16(float64 a, float_status *s)
     return bfloat16_round_pack_canonical(&p, s);
 }
 
+float16 float128_to_float16(float128 a, float_status *s)
+{
+    FloatParts128 p128 = float128_unpack_canonical(a, s);
+    FloatParts64 p64 = parts128_to_parts64(&p128, s);
+
+    return float16_round_pack_canonical(&p64, s);
+}
+
+bfloat16 float128_to_bfloat16(float128 a, float_status *s)
+{
+    FloatParts128 p128 = float128_unpack_canonical(a, s);
+    FloatParts64 p64 = parts128_to_parts64(&p128, s);
+
+    return bfloat16_round_pack_canonical(&p64, s);
+}
+
 float32 float128_to_float32(float128 a, float_status *s)
 {
     FloatParts128 p128 = float128_unpack_canonical(a, s);

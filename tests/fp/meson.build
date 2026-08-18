@@ -54,6 +54,15 @@ fpcflags = [
   '-Wno-uninitialized',
 ]
 
+softfloat_ext_test = executable(
+  'fp-test-softfloat-ext',
+  ['test-softfloat-ext.c', '../../fpu/softfloat.c'],
+  dependencies: [qemuutil],
+  c_args: fpcflags,
+)
+test('fp-test-softfloat-ext', softfloat_ext_test,
+     suite: ['softfloat', 'softfloat-ops'])
+
 fptest = executable(
   'fp-test',
   ['fp-test.c', '../../fpu/softfloat.c'],
