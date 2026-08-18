@@ -479,7 +479,8 @@ const FloatFmt float4_e2m1_params = {
 
 const FloatFmt float8_e4m3_params = {
     FLOAT_PARAMS(4, 3),
-    .exp_max_kind = float_expmax_e4m3
+    .exp_max_kind = float_expmax_e4m3,
+    .has_saturation = true,
 };
 
 /* 110 << frac_shift, with the implicit bit set */
@@ -488,7 +489,8 @@ const FloatFmt float8_e4m3_params = {
 #define E4M3_NAN_FRAC         0x7000000000000000ull
 
 const FloatFmt float8_e5m2_params = {
-    FLOAT_PARAMS(5, 2)
+    FLOAT_PARAMS(5, 2),
+    .has_saturation = true,
 };
 
 const FloatFmt float16_params = {
@@ -2435,7 +2437,8 @@ static void parts_float_to_e5m2(FloatParts64 *a, float_status *s, bool saturate)
         /* Per OCP, conversion in SATURATE mode bounds Inf to MAX. */
         if (saturate) {
             a->cls = float_class_normal;
-            a->exp = float8_e5m2_params.exp_max - 1;
+            a->exp = float8_e5m2_params.exp_max - 1 -
+                     float8_e5m2_params.exp_bias;
             a->frac = MAKE_64BIT_MASK(float8_e5m2_params.frac_shift,
                                       float8_e5m2_params.frac_size + 1);
         }
@@ -2575,6 +2578,25 @@ float8_e5m2 float32_to_float8_e5m2(float32 a, bool saturate, float_status *s)
 
     parts_float_to_e5m2(&p, s, saturate);
     return float8_e5m2_round_pack_canonical(&p, s, saturate);
+}
+
+float8_e4m3 float128_to_float8_e4m3(float128 a, bool saturate,
+                                    float_status *s)
+{
+    FloatParts128 p128 = float128_unpack_canonical(a, s);
+    FloatParts64 p64 = parts128_to_parts64(&p128, s);
+
+    return float8_e4m3_round_pack_canonical(&p64, s, saturate);
+}
+
+float8_e5m2 float128_to_float8_e5m2(float128 a, bool saturate,
+                                    float_status *s)
+{
+    FloatParts128 p128 = float128_unpack_canonical(a, s);
+    FloatParts64 p64 = parts128_to_parts64(&p128, s);
+
+    parts_float_to_e5m2(&p64, s, saturate);
+    return float8_e5m2_round_pack_canonical(&p64, s, saturate);
 }
 
 float16 float32_to_float16(float32 a, bool ieee, float_status *s)

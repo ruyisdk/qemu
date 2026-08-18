@@ -269,8 +269,8 @@ static void partsN(canonicalize)(FloatPartsN *p, float_status *status,
  * fraction; these bits will be removed. The exponent will be biased
  * by EXP_BIAS and must be bounded by [EXP_MAX-1, 0].
  *
- * The saturate parameter controls saturation behavior for formats that
- * support it -- when true, overflow produces max normal instead of infinity.
+ * For formats with has_saturation, saturate selects either max normal or
+ * the format's non-saturating overflow value.
  */
 
 /* Helper for uncanon_normal and uncanon, for FP8 E4M3. */
@@ -345,6 +345,10 @@ static void partsN(uncanon_normal)(FloatPartsN *p, float_status *s,
         break;
     default:
         g_assert_not_reached();
+    }
+
+    if (fmt->has_saturation) {
+        overflow_norm = saturate;
     }
 
     exp = p->exp + fmt->exp_bias;

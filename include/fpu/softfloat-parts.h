@@ -43,6 +43,8 @@ typedef enum __attribute__((__packed__)) {
  *       the float_status floatx80_behaviour handling applies
  *   overflow_raises_invalid: for float_expmax_normal, raise invalid
  *       instead of overflow.
+ *   has_saturation: the explicit saturation argument selects the overflow
+ *       result independently of the rounding mode.
  */
 typedef struct {
     int exp_size;
@@ -54,6 +56,7 @@ typedef struct {
     FloatFmtExpMaxKind exp_max_kind;
     bool has_explicit_bit;
     bool overflow_raises_invalid;
+    bool has_saturation;
     uint64_t round_mask;
 } FloatFmt;
 
