@@ -4392,6 +4392,22 @@ floatx80 floatx80_scalbn(floatx80 a, int n, float_status *status)
  * Square Root
  */
 
+float8_e4m3 float8_e4m3_sqrt(float8_e4m3 a, float_status *status)
+{
+    FloatParts64 p = float8_e4m3_unpack_canonical(a, status);
+
+    parts64_sqrt(&p, status, &float8_e4m3_params);
+    return float8_e4m3_round_pack_canonical(&p, status, false);
+}
+
+float8_e5m2 float8_e5m2_sqrt(float8_e5m2 a, float_status *status)
+{
+    FloatParts64 p = float8_e5m2_unpack_canonical(a, status);
+
+    parts64_sqrt(&p, status, &float8_e5m2_params);
+    return float8_e5m2_round_pack_canonical(&p, status, false);
+}
+
 float16 QEMU_FLATTEN float16_sqrt(float16 a, float_status *status)
 {
     FloatParts64 p = float16_unpack_canonical(a, status);

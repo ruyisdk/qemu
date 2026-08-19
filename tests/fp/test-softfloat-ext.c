@@ -49,10 +49,15 @@ typedef struct {
     bool e4m3;
     uint8_t one;
     uint8_t next_one;
+    uint8_t two;
+    uint8_t four;
     uint8_t min_normal;
     uint8_t max;
     uint8_t overflow;
     uint8_t default_nan;
+    uint8_t sqrt_two_rne;
+    uint8_t sqrt_two_down;
+    uint8_t sqrt_two_up;
     uint64_t tie_high;
     uint64_t max_high;
     uint64_t overflow_high;
@@ -159,10 +164,15 @@ static const FP8Format fp8_formats[] = {
         .e4m3 = true,
         .one = 0x38,
         .next_one = 0x39,
+        .two = 0x40,
+        .four = 0x48,
         .min_normal = 0x08,
         .max = 0x7e,
         .overflow = 0x7f,
         .default_nan = 0x7f,
+        .sqrt_two_rne = 0x3b,
+        .sqrt_two_down = 0x3b,
+        .sqrt_two_up = 0x3c,
         .tie_high = UINT64_C(0x3fff100000000000),
         .max_high = UINT64_C(0x4007c00000000000),
         .overflow_high = UINT64_C(0x4008000000000000),
@@ -181,10 +191,15 @@ static const FP8Format fp8_formats[] = {
         .bias = 15,
         .one = 0x3c,
         .next_one = 0x3d,
+        .two = 0x40,
+        .four = 0x44,
         .min_normal = 0x04,
         .max = 0x7b,
         .overflow = 0x7c,
         .default_nan = 0x7e,
+        .sqrt_two_rne = 0x3e,
+        .sqrt_two_down = 0x3d,
+        .sqrt_two_up = 0x3e,
         .tie_high = UINT64_C(0x3fff200000000000),
         .max_high = UINT64_C(0x400ec00000000000),
         .overflow_high = UINT64_C(0x400f000000000000),
@@ -656,6 +671,177 @@ static void test_float128_fp8_tininess_boundaries(void)
     }
 }
 
+static uint8_t fp8_sqrt(const FP8Format *fmt, uint8_t input,
+                        FloatRoundMode rmode, FloatExceptionFlags *flags)
+{
+    float_status status = make_status();
+    uint8_t result;
+
+    set_float_rounding_mode(rmode, &status);
+    if (fmt->e4m3) {
+        result = float8_e4m3_sqrt(input, &status);
+    } else {
+        result = float8_e5m2_sqrt(input, &status);
+    }
+    *flags = get_float_exception_flags(&status);
+    return result;
+}
+
+static void test_float8_sqrt(void)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(fp8_formats); i++) {
+        const FP8Format *fmt = &fp8_formats[i];
+        FloatExceptionFlags flags;
+
+        g_assert_cmphex(fp8_sqrt(fmt, fmt->four, float_round_nearest_even,
+                                &flags), ==, fmt->two);
+        g_assert_cmphex(flags, ==, 0);
+
+        g_assert_cmphex(fp8_sqrt(fmt, fmt->two, float_round_nearest_even,
+                                &flags), ==, fmt->sqrt_two_rne);
+        g_assert_cmphex(flags, ==, float_flag_inexact);
+        g_assert_cmphex(fp8_sqrt(fmt, fmt->two, float_round_down, &flags),
+                        ==, fmt->sqrt_two_down);
+        g_assert_cmphex(flags, ==, float_flag_inexact);
+        g_assert_cmphex(fp8_sqrt(fmt, fmt->two, float_round_up, &flags),
+                        ==, fmt->sqrt_two_up);
+        g_assert_cmphex(flags, ==, float_flag_inexact);
+
+        g_assert_cmphex(fp8_sqrt(fmt, 0, float_round_nearest_even, &flags),
+                        ==, 0);
+        g_assert_cmphex(flags, ==, 0);
+        g_assert_cmphex(fp8_sqrt(fmt, 0x80, float_round_nearest_even, &flags),
+                        ==, 0x80);
+        g_assert_cmphex(flags, ==, 0);
+
+        g_assert_cmphex(fp8_sqrt(fmt, fmt->one | 0x80,
+                                float_round_nearest_even, &flags),
+                        ==, fmt->default_nan);
+        g_assert_cmphex(flags, ==,
+                        float_flag_invalid | float_flag_invalid_sqrt);
+        g_assert_cmphex(fp8_sqrt(fmt, fmt->default_nan,
+                                float_round_nearest_even, &flags),
+                        ==, fmt->default_nan);
+        g_assert_cmphex(flags, ==, 0);
+
+        if (!fmt->e4m3) {
+            g_assert_cmphex(fp8_sqrt(fmt, 0x7c, float_round_nearest_even,
+                                    &flags), ==, 0x7c);
+            g_assert_cmphex(flags, ==, 0);
+            g_assert_cmphex(fp8_sqrt(fmt, 0xfc, float_round_nearest_even,
+                                    &flags), ==, fmt->default_nan);
+            g_assert_cmphex(flags, ==,
+                            float_flag_invalid | float_flag_invalid_sqrt);
+            g_assert_cmphex(fp8_sqrt(fmt, 0x7d, float_round_nearest_even,
+                                    &flags), ==, fmt->default_nan);
+            g_assert_cmphex(flags, ==,
+                            float_flag_invalid | float_flag_invalid_snan);
+        }
+    }
+}
+
+/* Value in units of the format's minimum subnormal, for finite positive raw. */
+static uint64_t fp8_scaled_value(const FP8Format *fmt, uint8_t raw)
+{
+    unsigned fraction = raw & ((1U << fmt->frac_bits) - 1);
+    unsigned exponent = raw >> fmt->frac_bits;
+
+    return exponent ? (uint64_t)((1U << fmt->frac_bits) | fraction) <<
+                      (exponent - 1) : fraction;
+}
+
+static uint8_t fp8_sqrt_reference(const FP8Format *fmt, uint8_t raw,
+                                 FloatRoundMode mode,
+                                 FloatExceptionFlags *flags)
+{
+    uint8_t positive = raw & 0x7f;
+    unsigned low = 0, high = fmt->max;
+    uint64_t input, lower, upper, midpoint;
+
+    *flags = 0;
+    if (!fp8_encoding_is_finite(fmt, raw) &&
+        (fmt->e4m3 || positive > 0x7c)) {
+        if (!fmt->e4m3 && positive == 0x7d) {
+            *flags = float_flag_invalid | float_flag_invalid_snan;
+        }
+        return fmt->default_nan;
+    }
+    if (positive == 0) {
+        return raw;
+    }
+    if (raw & 0x80) {
+        *flags = float_flag_invalid | float_flag_invalid_sqrt;
+        return fmt->default_nan;
+    }
+    if (!fmt->e4m3 && positive == 0x7c) {
+        return raw;
+    }
+    if (positive < (1U << fmt->frac_bits)) {
+        *flags = float_flag_input_denormal_used;
+    }
+
+    /* Compare y*y with x in units of (minimum subnormal)^2. */
+    input = fp8_scaled_value(fmt, raw) << (fmt->bias + fmt->frac_bits - 1);
+    while (low < high) {
+        unsigned middle = (low + high + 1) / 2;
+        uint64_t value = fp8_scaled_value(fmt, middle);
+
+        if (value * value <= input) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    lower = fp8_scaled_value(fmt, low);
+    if (lower * lower == input) {
+        return low;
+    }
+    *flags |= float_flag_inexact;
+    switch (mode) {
+    case float_round_down:
+    case float_round_to_zero:
+        return low;
+    case float_round_up:
+        return low + 1;
+    case float_round_to_odd:
+    case float_round_to_odd_inf:
+        return low | 1;
+    case float_round_nearest_even:
+    case float_round_nearest_even_max:
+    case float_round_ties_away:
+        upper = fp8_scaled_value(fmt, low + 1);
+        midpoint = (lower + upper) * (lower + upper);
+        return low + (input * 4 > midpoint ||
+                      (input * 4 == midpoint &&
+                       (mode == float_round_ties_away || (low & 1))));
+    default:
+        g_assert_not_reached();
+    }
+}
+
+static void test_float8_sqrt_exhaustive(void)
+{
+    for (size_t f = 0; f < ARRAY_SIZE(fp8_formats); f++) {
+        const FP8Format *fmt = &fp8_formats[f];
+
+        for (size_t m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+            for (unsigned raw = 0; raw <= UINT8_MAX; raw++) {
+                FloatExceptionFlags flags;
+                uint8_t expected = fp8_sqrt_reference(
+                    fmt, raw, all_rounding_modes[m], &flags);
+                float_status status = make_accrued_status(
+                    all_rounding_modes[m]);
+                uint8_t result = fmt->e4m3 ? float8_e4m3_sqrt(raw, &status) :
+                                           float8_e5m2_sqrt(raw, &status);
+
+                g_assert_cmphex(result, ==, expected);
+                g_assert_cmphex(get_float_exception_flags(&status), ==,
+                                flags | float_flag_divbyzero);
+            }
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -679,5 +865,8 @@ int main(int argc, char **argv)
                     test_float128_fp8_tininess_boundaries);
     g_test_add_func("/softfloat/fp8/overflow-modes", test_fp8_overflow_modes);
     g_test_add_func("/softfloat/fp8/special-values", test_fp8_special_values);
+    g_test_add_func("/softfloat/float8/sqrt", test_float8_sqrt);
+    g_test_add_func("/softfloat/float8/sqrt-exhaustive",
+                    test_float8_sqrt_exhaustive);
     return g_test_run();
 }

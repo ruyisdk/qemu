@@ -226,6 +226,9 @@ float8_e5m2 float32_to_float8_e5m2(float32, bool sat, float_status *status);
 float8_e5m2 float128_to_float8_e5m2(float128, bool sat,
                                     float_status *status);
 
+float8_e4m3 float8_e4m3_sqrt(float8_e4m3, float_status *status);
+float8_e5m2 float8_e5m2_sqrt(float8_e5m2, float_status *status);
+
 /*----------------------------------------------------------------------------
 | Software half-precision conversion routines.
 *----------------------------------------------------------------------------*/
