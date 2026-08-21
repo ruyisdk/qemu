@@ -3842,31 +3842,68 @@ bfloat16 int8_to_bfloat16(int8_t a, float_status *status)
     return int64_to_bfloat16_scalbn(a, 0, status);
 }
 
+float8_e4m3 int128_to_float8_e4m3(Int128 a, bool saturate,
+                                  float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_sint128_to_float(&p, a);
+    return float8_e4m3_round_pack_canonical(&p, status, saturate);
+}
+
+float8_e5m2 int128_to_float8_e5m2(Int128 a, bool saturate,
+                                  float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_sint128_to_float(&p, a);
+    parts_float_to_e5m2(&p, status, saturate);
+    return float8_e5m2_round_pack_canonical(&p, status, saturate);
+}
+
+float16 int128_to_float16(Int128 a, float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_sint128_to_float(&p, a);
+    return float16_round_pack_canonical(&p, status);
+}
+
+bfloat16 int128_to_bfloat16(Int128 a, float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_sint128_to_float(&p, a);
+    return bfloat16_round_pack_canonical(&p, status);
+}
+
+float32 int128_to_float32(Int128 a, float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_sint128_to_float(&p, a);
+    return float32_round_pack_canonical(&p, status);
+}
+
+float64 int128_to_float64(Int128 a, float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_sint128_to_float(&p, a);
+    return float64_round_pack_canonical(&p, status);
+}
+
+FloatParts128 int128_unpack_canonical(Int128 a)
+{
+    FloatParts128 p;
+
+    parts128_sint128_to_float(&p, a);
+    return p;
+}
+
 float128 int128_to_float128(Int128 a, float_status *status)
 {
-    FloatParts128 p = { };
-    int shift;
-
-    if (int128_nz(a)) {
-        p.cls = float_class_normal;
-        if (!int128_nonneg(a)) {
-            p.sign = true;
-            a = int128_neg(a);
-        }
-
-        shift = clz64(int128_gethi(a));
-        if (shift == 64) {
-            shift += clz64(int128_getlo(a));
-        }
-
-        p.exp = 127 - shift;
-        a = int128_lshift(a, shift);
-
-        p.frac_hi = int128_gethi(a);
-        p.frac_lo = int128_getlo(a);
-    } else {
-        p.cls = float_class_zero;
-    }
+    FloatParts128 p = int128_unpack_canonical(a);
 
     return float128_round_pack_canonical(&p, status);
 }
@@ -4070,27 +4107,68 @@ float128 uint64_to_float128(uint64_t a, float_status *status)
     return float128_round_pack_canonical(&p, status);
 }
 
+float8_e4m3 uint128_to_float8_e4m3(Int128 a, bool saturate,
+                                   float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_uint128_to_float(&p, a);
+    return float8_e4m3_round_pack_canonical(&p, status, saturate);
+}
+
+float8_e5m2 uint128_to_float8_e5m2(Int128 a, bool saturate,
+                                   float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_uint128_to_float(&p, a);
+    parts_float_to_e5m2(&p, status, saturate);
+    return float8_e5m2_round_pack_canonical(&p, status, saturate);
+}
+
+float16 uint128_to_float16(Int128 a, float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_uint128_to_float(&p, a);
+    return float16_round_pack_canonical(&p, status);
+}
+
+bfloat16 uint128_to_bfloat16(Int128 a, float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_uint128_to_float(&p, a);
+    return bfloat16_round_pack_canonical(&p, status);
+}
+
+float32 uint128_to_float32(Int128 a, float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_uint128_to_float(&p, a);
+    return float32_round_pack_canonical(&p, status);
+}
+
+float64 uint128_to_float64(Int128 a, float_status *status)
+{
+    FloatParts64 p;
+
+    parts64_uint128_to_float(&p, a);
+    return float64_round_pack_canonical(&p, status);
+}
+
+FloatParts128 uint128_unpack_canonical(Int128 a)
+{
+    FloatParts128 p;
+
+    parts128_uint128_to_float(&p, a);
+    return p;
+}
+
 float128 uint128_to_float128(Int128 a, float_status *status)
 {
-    FloatParts128 p = { };
-    int shift;
-
-    if (int128_nz(a)) {
-        p.cls = float_class_normal;
-
-        shift = clz64(int128_gethi(a));
-        if (shift == 64) {
-            shift += clz64(int128_getlo(a));
-        }
-
-        p.exp = 127 - shift;
-        a = int128_lshift(a, shift);
-
-        p.frac_hi = int128_gethi(a);
-        p.frac_lo = int128_getlo(a);
-    } else {
-        p.cls = float_class_zero;
-    }
+    FloatParts128 p = uint128_unpack_canonical(a);
 
     return float128_round_pack_canonical(&p, status);
 }

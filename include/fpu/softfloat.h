@@ -208,6 +208,24 @@ float128 int128_to_float128(Int128, float_status *status);
 float128 uint64_to_float128(uint64_t, float_status *status);
 float128 uint128_to_float128(Int128, float_status *status);
 
+float8_e4m3 int128_to_float8_e4m3(Int128, bool sat,
+                                  float_status *status);
+float8_e5m2 int128_to_float8_e5m2(Int128, bool sat,
+                                  float_status *status);
+float16 int128_to_float16(Int128, float_status *status);
+bfloat16 int128_to_bfloat16(Int128, float_status *status);
+float32 int128_to_float32(Int128, float_status *status);
+float64 int128_to_float64(Int128, float_status *status);
+
+float8_e4m3 uint128_to_float8_e4m3(Int128, bool sat,
+                                   float_status *status);
+float8_e5m2 uint128_to_float8_e5m2(Int128, bool sat,
+                                   float_status *status);
+float16 uint128_to_float16(Int128, float_status *status);
+bfloat16 uint128_to_bfloat16(Int128, float_status *status);
+float32 uint128_to_float32(Int128, float_status *status);
+float64 uint128_to_float64(Int128, float_status *status);
+
 /*----------------------------------------------------------------------------
 | OCP FP{4,8} conversion routines.
 *----------------------------------------------------------------------------*/

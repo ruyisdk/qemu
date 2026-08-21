@@ -11,6 +11,7 @@
 
 #include "qemu/osdep.h"
 #include "fpu/softfloat.h"
+#include "fpu/softfloat-parts.h"
 
 typedef uint64_t (*Float128NarrowFn)(float128 input, float_status *status);
 
@@ -36,6 +37,8 @@ typedef uint8_t (*Float32FP8Fn)(float32 input, bool saturate,
                                 float_status *status);
 typedef uint8_t (*BFloat16FP8Fn)(bfloat16 input, bool saturate,
                                  float_status *status);
+typedef uint8_t (*Int128FP8Fn)(Int128 input, bool saturate,
+                               float_status *status);
 
 typedef struct {
     const char *name;
@@ -43,6 +46,8 @@ typedef struct {
     Float128FP8Fn via_float32;
     Float32FP8Fn from_float32;
     BFloat16FP8Fn from_bfloat16;
+    Int128FP8Fn from_int128;
+    Int128FP8Fn from_uint128;
     unsigned int exp_bits;
     unsigned int frac_bits;
     int bias;
@@ -158,6 +163,8 @@ static const FP8Format fp8_formats[] = {
         .via_float32 = fp8_e4m3_via_float32,
         .from_float32 = float32_to_float8_e4m3,
         .from_bfloat16 = bfloat16_to_float8_e4m3,
+        .from_int128 = int128_to_float8_e4m3,
+        .from_uint128 = uint128_to_float8_e4m3,
         .exp_bits = 4,
         .frac_bits = 3,
         .bias = 7,
@@ -186,6 +193,8 @@ static const FP8Format fp8_formats[] = {
         .via_float32 = fp8_e5m2_via_float32,
         .from_float32 = float32_to_float8_e5m2,
         .from_bfloat16 = bfloat16_to_float8_e5m2,
+        .from_int128 = int128_to_float8_e5m2,
+        .from_uint128 = uint128_to_float8_e5m2,
         .exp_bits = 5,
         .frac_bits = 2,
         .bias = 15,
@@ -239,6 +248,573 @@ static float_status make_accrued_status(FloatRoundMode mode)
     set_float_rounding_mode(mode, &status);
     float_raise(float_flag_divbyzero, &status);
     return status;
+}
+
+static void test_int128_direct_conversions(void)
+{
+    Int128 signed_min = int128_make128(0, UINT64_C(0x8000000000000000));
+    Int128 unsigned_max = int128_make128(UINT64_MAX, UINT64_MAX);
+    Int128 signed_double_round = int128_make128(
+        1, UINT64_C(0x4000000000000200));
+    Int128 unsigned_double_round = int128_make128(
+        1, UINT64_C(0x8000000000000400));
+    float_status status;
+
+    status = make_status();
+    g_assert_cmphex(float64_val(int128_to_float64(signed_min, &status)), ==,
+                    UINT64_C(0xc7e0000000000000));
+    g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+
+    status = make_status();
+    g_assert_cmphex(float64_val(uint128_to_float64(unsigned_max, &status)),
+                    ==, UINT64_C(0x47f0000000000000));
+    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                    float_flag_inexact);
+
+    /*
+     * The low one bit is lost by an intermediate binary128 rounding.  A
+     * direct conversion must still see that the FP64 halfway value is
+     * exceeded and round upward.
+     */
+    status = make_status();
+    g_assert_cmphex(float64_val(int128_to_float64(signed_double_round,
+                                                  &status)), ==,
+                    UINT64_C(0x47d0000000000001));
+    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                    float_flag_inexact);
+
+    status = make_status();
+    g_assert_cmphex(float64_val(uint128_to_float64(unsigned_double_round,
+                                                   &status)), ==,
+                    UINT64_C(0x47e0000000000001));
+    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                    float_flag_inexact);
+
+    status = make_status();
+    set_float_rounding_mode(float_round_to_zero, &status);
+    g_assert_cmphex(float16_val(uint128_to_float16(unsigned_max, &status)),
+                    ==, UINT16_C(0x7bff));
+    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                    float_flag_overflow | float_flag_inexact);
+
+    status = make_status();
+    set_float_rounding_mode(float_round_to_zero, &status);
+    g_assert_cmphex(uint128_to_bfloat16(unsigned_max, &status), ==,
+                    UINT16_C(0x7f7f));
+    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                    float_flag_inexact);
+
+    status = make_status();
+    set_float_rounding_mode(float_round_to_zero, &status);
+    g_assert_cmphex(float32_val(uint128_to_float32(unsigned_max, &status)),
+                    ==, UINT32_C(0x7f7fffff));
+    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                    float_flag_inexact);
+
+    status = make_status();
+    g_assert_cmphex(uint128_to_float8_e4m3(int128_make64(1), true, &status),
+                    ==, UINT8_C(0x38));
+    g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+
+    status = make_status();
+    g_assert_cmphex(uint128_to_float8_e5m2(int128_make64(1), false, &status),
+                    ==, UINT8_C(0x3c));
+    g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+
+    status = make_status();
+    g_assert_cmphex(int128_to_float8_e4m3(int128_makes64(-1), true,
+                                         &status), ==, UINT8_C(0xb8));
+    g_assert_cmphex(int128_to_float8_e5m2(int128_makes64(-1), false,
+                                         &status), ==, UINT8_C(0xbc));
+    g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+}
+
+typedef uint64_t (*Int128ConvertFn)(Int128, float_status *);
+
+typedef struct Int128RoundFormat {
+    const char *name;
+    Int128ConvertFn convert_unsigned;
+    Int128ConvertFn convert_signed;
+    Int128 halfway;
+    uint64_t even;
+    uint64_t odd;
+    uint64_t sign;
+    uint64_t negative_one;
+    uint64_t probe_halfway;
+    uint64_t probe_even;
+    uint64_t probe_odd;
+} Int128RoundFormat;
+
+static uint64_t uint128_to_e4m3_bits(Int128 value, float_status *status)
+{
+    return uint128_to_float8_e4m3(value, true, status);
+}
+
+static uint64_t uint128_to_e5m2_bits(Int128 value, float_status *status)
+{
+    return uint128_to_float8_e5m2(value, false, status);
+}
+
+static uint64_t uint128_to_f16_bits(Int128 value, float_status *status)
+{
+    return float16_val(uint128_to_float16(value, status));
+}
+
+static uint64_t uint128_to_bf16_bits(Int128 value, float_status *status)
+{
+    return uint128_to_bfloat16(value, status);
+}
+
+static uint64_t uint128_to_f32_bits(Int128 value, float_status *status)
+{
+    return float32_val(uint128_to_float32(value, status));
+}
+
+static uint64_t uint128_to_f64_bits(Int128 value, float_status *status)
+{
+    return float64_val(uint128_to_float64(value, status));
+}
+
+static uint64_t int128_to_e4m3_bits(Int128 value, float_status *status)
+{
+    return int128_to_float8_e4m3(value, true, status);
+}
+
+static uint64_t int128_to_e5m2_bits(Int128 value, float_status *status)
+{
+    return int128_to_float8_e5m2(value, false, status);
+}
+
+static uint64_t int128_to_f16_bits(Int128 value, float_status *status)
+{
+    return float16_val(int128_to_float16(value, status));
+}
+
+static uint64_t int128_to_bf16_bits(Int128 value, float_status *status)
+{
+    return int128_to_bfloat16(value, status);
+}
+
+static uint64_t int128_to_f32_bits(Int128 value, float_status *status)
+{
+    return float32_val(int128_to_float32(value, status));
+}
+
+static uint64_t int128_to_f64_bits(Int128 value, float_status *status)
+{
+    return float64_val(int128_to_float64(value, status));
+}
+
+static void test_int128_direct_rounding(void)
+{
+    static const FloatRoundMode modes[] = {
+        float_round_nearest_even,
+        float_round_to_zero,
+        float_round_down,
+        float_round_up,
+        float_round_ties_away,
+        float_round_to_odd,
+    };
+    static const bool rounds_up[] = {
+        false, false, false, true, true, true,
+    };
+    static const bool negative_rounds_up[] = {
+        false, false, true, false, true, true,
+    };
+    const Int128RoundFormat formats[] = {
+        { "e4m3", uint128_to_e4m3_bits, int128_to_e4m3_bits,
+          int128_make64(17), 0x58, 0x59, 0x80, 0xb8,
+          34, 0x60, 0x61 },
+        { "e5m2", uint128_to_e5m2_bits, int128_to_e5m2_bits,
+          int128_make64(9), 0x48, 0x49, 0x80, 0xbc,
+          18, 0x4c, 0x4d },
+        { "float16", uint128_to_f16_bits, int128_to_f16_bits,
+          int128_make64(2049), 0x6800, 0x6801, 0x8000, 0xbc00,
+          4098, 0x6c00, 0x6c01 },
+        { "bfloat16", uint128_to_bf16_bits, int128_to_bf16_bits,
+          int128_make64(257), 0x4380, 0x4381, 0x8000, 0xbf80,
+          514, 0x4400, 0x4401 },
+        { "float32", uint128_to_f32_bits, int128_to_f32_bits,
+          int128_make64(16777217), 0x4b800000, 0x4b800001, 0x80000000,
+          0xbf800000,
+          UINT64_C(33554434), 0x4c000000, 0x4c000001 },
+        { "float64", uint128_to_f64_bits, int128_to_f64_bits,
+          int128_make64(UINT64_C(9007199254740993)),
+          UINT64_C(0x4340000000000000),
+          UINT64_C(0x4340000000000001),
+          UINT64_C(0x8000000000000000),
+          UINT64_C(0xbff0000000000000),
+          UINT64_C(18014398509481986),
+          UINT64_C(0x4350000000000000),
+          UINT64_C(0x4350000000000001) },
+    };
+
+    for (size_t i = 0; i < ARRAY_SIZE(formats); i++) {
+        for (size_t j = 0; j < ARRAY_SIZE(modes); j++) {
+            float_status status = make_status();
+            uint64_t result;
+
+            set_float_rounding_mode(modes[j], &status);
+            result = formats[i].convert_unsigned(formats[i].halfway,
+                                                 &status);
+            g_test_message("format: %s, round: %zu", formats[i].name, j);
+            g_assert_cmphex(result, ==,
+                            rounds_up[j] ? formats[i].odd : formats[i].even);
+            g_assert_cmphex(get_float_exception_flags(&status), ==,
+                            float_flag_inexact);
+
+            status = make_status();
+            set_float_rounding_mode(modes[j], &status);
+            result = formats[i].convert_signed(
+                int128_neg(formats[i].halfway), &status);
+            g_assert_cmphex(
+                result, ==,
+                formats[i].sign |
+                (negative_rounds_up[j] ? formats[i].odd : formats[i].even));
+            g_assert_cmphex(get_float_exception_flags(&status), ==,
+                            float_flag_inexact);
+        }
+
+        {
+            float_status status = make_status();
+            uint64_t result = formats[i].convert_unsigned(
+                int128_zero(), &status);
+
+            g_assert_cmphex(result, ==, 0);
+            g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+
+            status = make_status();
+            result = formats[i].convert_signed(int128_zero(), &status);
+            g_assert_cmphex(result, ==, 0);
+            g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+        }
+        {
+            float_status status = make_status();
+            uint64_t result = formats[i].convert_signed(
+                int128_makes64(-1), &status);
+
+            g_assert_cmphex(result, ==, formats[i].negative_one);
+            g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+        }
+        {
+            float_status status = make_status();
+            uint64_t result = formats[i].convert_unsigned(
+                int128_make64(formats[i].probe_halfway - 2), &status);
+
+            g_assert_cmphex(result, ==, formats[i].probe_even);
+            g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+        }
+        for (int side = -1; side <= 1; side += 2) {
+            float_status status = make_status();
+            uint64_t result = formats[i].convert_unsigned(
+                int128_make64(formats[i].probe_halfway + side), &status);
+
+            g_assert_cmphex(result, ==, side < 0 ? formats[i].probe_even :
+                                                  formats[i].probe_odd);
+            g_assert_cmphex(get_float_exception_flags(&status), ==,
+                            float_flag_inexact);
+        }
+    }
+}
+
+static void assert_int128_to_float128(Int128 input, bool is_signed,
+                                      FloatRoundMode mode, uint64_t high,
+                                      uint64_t low, FloatExceptionFlags flags)
+{
+    float_status status = make_status();
+    float128 result;
+
+    set_float_rounding_mode(mode, &status);
+    /* Conversion must accrue exceptions, not clear a previous exception. */
+    set_float_exception_flags(float_flag_divbyzero, &status);
+    result = is_signed ? int128_to_float128(input, &status) :
+                         uint128_to_float128(input, &status);
+    g_assert_cmphex(result.high, ==, high);
+    g_assert_cmphex(result.low, ==, low);
+    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                    flags | float_flag_divbyzero);
+}
+
+static void test_int128_word_boundaries(void)
+{
+    const FloatRoundMode mode = float_round_nearest_even;
+
+    assert_int128_to_float128(int128_zero(), false, mode, 0, 0, 0);
+    assert_int128_to_float128(int128_zero(), true, mode, 0, 0, 0);
+    assert_int128_to_float128(int128_make64(UINT64_MAX), false, mode,
+                              UINT64_C(0x403effffffffffff),
+                              UINT64_C(0xfffe000000000000), 0);
+    assert_int128_to_float128(int128_make128(1, 1), true, mode,
+                              UINT64_C(0x403f000000000000),
+                              UINT64_C(0x0001000000000000), 0);
+
+    /* Every normalization shift, including the boundary between the words. */
+    for (unsigned int bit = 0; bit < 128; bit++) {
+        uint64_t lo = bit < 64 ? UINT64_C(1) << bit : 0;
+        uint64_t hi = bit >= 64 ? UINT64_C(1) << (bit - 64) : 0;
+        Int128 value = int128_make128(lo, hi);
+        Int128 negative = bit == 127 ? value : int128_neg(value);
+        uint64_t f128_high = (uint64_t)(16383 + bit) << 48;
+        uint64_t f64_bits = (uint64_t)(1023 + bit) << 52;
+        uint64_t sign = UINT64_C(1) << 63;
+        float_status status = make_status();
+
+        assert_int128_to_float128(value, false, mode, f128_high, 0, 0);
+        assert_int128_to_float128(negative, true, mode,
+                                  f128_high | sign, 0, 0);
+        if (bit < 127) {
+            assert_int128_to_float128(value, true, mode, f128_high, 0, 0);
+        }
+        g_assert_cmphex(uint128_to_float64(value, &status), ==, f64_bits);
+        g_assert_cmphex(int128_to_float64(negative, &status), ==,
+                        f64_bits | sign);
+        g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+    }
+}
+
+static void test_int128_float128_rounding(void)
+{
+    static const struct {
+        FloatRoundMode mode;
+        bool positive_up;
+        bool negative_up;
+        bool maximum_up;
+    } rounding[] = {
+        { float_round_nearest_even, false, false, true },
+        { float_round_to_zero, false, false, false },
+        { float_round_down, false, true, false },
+        { float_round_up, true, false, true },
+        { float_round_ties_away, true, true, true },
+        { float_round_to_odd, true, true, false },
+        { float_round_to_odd_inf, true, true, false },
+    };
+    /* At 2^113 binary128's ULP is 2, so adding 1 is an exact halfway. */
+    Int128 halfway = int128_make128(1, UINT64_C(1) << 49);
+
+    for (size_t i = 0; i < ARRAY_SIZE(rounding); i++) {
+        FloatRoundMode mode = rounding[i].mode;
+        uint64_t max_low = rounding[i].maximum_up ? 0 : UINT64_MAX;
+        uint64_t smax_high = rounding[i].maximum_up ?
+                            UINT64_C(0x407e000000000000) :
+                            UINT64_C(0x407dffffffffffff);
+        uint64_t umax_high = rounding[i].maximum_up ?
+                            UINT64_C(0x407f000000000000) :
+                            UINT64_C(0x407effffffffffff);
+
+        assert_int128_to_float128(halfway, false, mode,
+                                  UINT64_C(0x4070000000000000),
+                                  rounding[i].positive_up, float_flag_inexact);
+        assert_int128_to_float128(halfway, true, mode,
+                                  UINT64_C(0x4070000000000000),
+                                  rounding[i].positive_up, float_flag_inexact);
+        assert_int128_to_float128(int128_neg(halfway), true, mode,
+                                  UINT64_C(0xc070000000000000),
+                                  rounding[i].negative_up, float_flag_inexact);
+        assert_int128_to_float128(INT128_MAX, true, mode,
+                                  smax_high, max_low,
+                                  float_flag_inexact);
+        assert_int128_to_float128(UINT128_MAX, false, mode,
+                                  umax_high, max_low,
+                                  float_flag_inexact);
+        assert_int128_to_float128(INT128_MIN, true, mode,
+                                  UINT64_C(0xc07e000000000000), 0, 0);
+    }
+}
+
+typedef struct Int128RefFormat {
+    Int128ConvertFn convert_unsigned;
+    Int128ConvertFn convert_signed;
+    unsigned exp_bits;
+    unsigned frac_bits;
+    unsigned bias;
+    bool ocp;
+    bool e4m3;
+} Int128RefFormat;
+
+/* Round the exact integer at unbounded exponent, then apply format limits. */
+static Int128 int128_float_reference(const Int128RefFormat *fmt, Int128 raw,
+                                     bool is_signed, FloatRoundMode mode,
+                                     FloatExceptionFlags *flags)
+{
+    uint64_t lo = int128_getlo(raw), hi = int128_gethi(raw);
+    bool negative = is_signed && (hi >> 63);
+    unsigned exp_max = (1U << fmt->exp_bits) - 1;
+    Int128 value, rounded, remainder = int128_zero();
+    Int128 frac_mask = int128_sub(int128_lshift(int128_one(), fmt->frac_bits),
+                                  int128_one());
+    bool increment = false, overflow;
+    int exponent, shift;
+
+    *flags = 0;
+    if (negative) {
+        lo = ~lo + 1;
+        hi = ~hi + (lo == 0);
+    }
+    value = int128_make128(lo, hi);
+    if (!int128_nz(value)) {
+        return int128_zero();
+    }
+    exponent = hi ? 127 - clz64(hi) : 63 - clz64(lo);
+    shift = exponent - (int)fmt->frac_bits;
+    if (shift > 0) {
+        Int128 mask = int128_sub(int128_lshift(int128_one(), shift),
+                                  int128_one());
+        Int128 halfway = int128_lshift(int128_one(), shift - 1);
+
+        rounded = int128_urshift(value, shift);
+        remainder = int128_and(value, mask);
+        switch (mode) {
+        case float_round_nearest_even:
+        case float_round_nearest_even_max:
+        case float_round_ties_away:
+            increment = int128_ult(halfway, remainder) ||
+                (int128_eq(halfway, remainder) &&
+                 (mode == float_round_ties_away ||
+                  (int128_getlo(rounded) & 1)));
+            break;
+        case float_round_down:
+            increment = negative && int128_nz(remainder);
+            break;
+        case float_round_up:
+            increment = !negative && int128_nz(remainder);
+            break;
+        case float_round_to_zero:
+            break;
+        case float_round_to_odd:
+        case float_round_to_odd_inf:
+            if (int128_nz(remainder)) {
+                rounded = int128_or(rounded, int128_one());
+            }
+            break;
+        default:
+            g_assert_not_reached();
+        }
+        if (increment) {
+            rounded = int128_add(rounded, int128_one());
+        }
+    } else {
+        rounded = int128_lshift(value, -shift);
+    }
+    if (int128_nz(int128_urshift(rounded, fmt->frac_bits + 1))) {
+        rounded = int128_urshift(rounded, 1);
+        exponent++;
+    }
+
+    exponent += fmt->bias;
+    overflow = fmt->e4m3 ? exponent > exp_max ||
+        (exponent == exp_max && int128_getlo(rounded) == 15) :
+        exponent >= exp_max;
+    if (overflow) {
+        bool bounded = fmt->ocp ? fmt->e4m3 :
+            mode == float_round_to_zero || mode == float_round_to_odd ||
+            mode == float_round_nearest_even_max ||
+            (mode == float_round_down && !negative) ||
+            (mode == float_round_up && negative);
+
+        *flags = float_flag_overflow | float_flag_inexact;
+        if (fmt->e4m3) {
+            value = int128_make64(0x7e);
+        } else {
+            value = int128_lshift(int128_make64(exp_max - bounded),
+                                   fmt->frac_bits);
+            if (bounded) {
+                value = int128_or(value, frac_mask);
+            }
+        }
+    } else {
+        value = int128_or(
+            int128_lshift(int128_make64(exponent), fmt->frac_bits),
+            int128_and(rounded, frac_mask));
+        if (int128_nz(remainder)) {
+            *flags = float_flag_inexact;
+        }
+    }
+    if (negative) {
+        unsigned sign_bit = fmt->exp_bits + fmt->frac_bits;
+        Int128 sign = sign_bit < 64 ? int128_make64(BIT_ULL(sign_bit)) :
+                     int128_make128(0, BIT_ULL(sign_bit - 64));
+
+        value = int128_or(value, sign);
+    }
+    return value;
+}
+
+static void check_int128_reference(Int128 raw)
+{
+    static const Int128RefFormat formats[] = {
+        { uint128_to_f16_bits, int128_to_f16_bits, 5, 10, 15 },
+        { uint128_to_bf16_bits, int128_to_bf16_bits, 8, 7, 127 },
+        { uint128_to_f32_bits, int128_to_f32_bits, 8, 23, 127 },
+        { uint128_to_f64_bits, int128_to_f64_bits, 11, 52, 1023 },
+        { uint128_to_e4m3_bits, int128_to_e4m3_bits, 4, 3, 7, true, true },
+        { uint128_to_e5m2_bits, int128_to_e5m2_bits, 5, 2, 15, true },
+        { NULL, NULL, 15, 112, 16383 },
+    };
+
+    for (size_t f = 0; f < ARRAY_SIZE(formats); f++) {
+        const Int128RefFormat *fmt = &formats[f];
+
+        for (size_t m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+            for (unsigned is_signed = 0; is_signed < 2; is_signed++) {
+                FloatExceptionFlags flags;
+                Int128 expected = int128_float_reference(
+                    fmt, raw, is_signed, all_rounding_modes[m], &flags);
+                float_status status = make_accrued_status(
+                    all_rounding_modes[m]);
+                Int128 result;
+
+                if (fmt->frac_bits == 112) {
+                    float128 f128 = is_signed ?
+                        int128_to_float128(raw, &status) :
+                        uint128_to_float128(raw, &status);
+
+                    result = int128_make128(f128.low, f128.high);
+                } else {
+                    result = int128_make64(is_signed ?
+                        fmt->convert_signed(raw, &status) :
+                        fmt->convert_unsigned(raw, &status));
+                }
+                g_assert_cmphex(int128_gethi(result), ==,
+                                int128_gethi(expected));
+                g_assert_cmphex(int128_getlo(result), ==,
+                                int128_getlo(expected));
+                g_assert_cmphex(get_float_exception_flags(&status), ==,
+                                flags | float_flag_divbyzero);
+            }
+        }
+    }
+}
+
+static uint64_t int128_reference_random(uint64_t *seed)
+{
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    return *seed;
+}
+
+static void test_int128_reference(void)
+{
+    uint64_t seed = UINT64_C(0x6a09e667f3bcc909);
+
+    check_int128_reference(int128_zero());
+    check_int128_reference(INT128_MIN);
+    check_int128_reference(INT128_MAX);
+    check_int128_reference(UINT128_MAX);
+    for (unsigned bit = 0; bit < 128; bit++) {
+        Int128 power = bit < 64 ? int128_make64(BIT_ULL(bit)) :
+                       int128_make128(0, BIT_ULL(bit - 64));
+
+        check_int128_reference(power);
+        check_int128_reference(int128_sub(power, int128_one()));
+        check_int128_reference(int128_add(power, int128_one()));
+    }
+    for (unsigned i = 0; i < 1024; i++) {
+        uint64_t lo = int128_reference_random(&seed);
+        uint64_t hi = int128_reference_random(&seed);
+
+        check_int128_reference(int128_make128(lo, hi));
+    }
 }
 
 static void assert_narrow(const NarrowFormat *fmt, FloatRoundMode rmode,
@@ -497,6 +1073,7 @@ static void test_fp8_overflow_modes(void)
         const FP8Format *fmt = &fp8_formats[i];
         uint32_t raw32 = fmt->e4m3 ? UINT32_C(0x44000000) :
                                    UINT32_C(0x47800000);
+        uint64_t integer = fmt->e4m3 ? 512 : 65536;
 
         /* 512 and 65536 have exact FP8 significands but exceed its range. */
         for (size_t m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
@@ -510,6 +1087,8 @@ static void test_fp8_overflow_modes(void)
                     float128 input = make_float128(
                         fmt->overflow_high | (uint64_t)sign << 63, 0);
                     uint32_t source32 = raw32 | (sign << 31);
+                    Int128 signed_input = int128_makes64(
+                        sign ? -(int64_t)integer : (int64_t)integer);
 
                     g_test_message("%s mode=%d sat=%u sign=%u",
                                    fmt->name, mode, sat, sign);
@@ -530,6 +1109,20 @@ static void test_fp8_overflow_modes(void)
                     g_assert_cmphex(get_float_exception_flags(&status), ==,
                                     flags);
 
+                    status = make_accrued_status(mode);
+                    g_assert_cmphex(fmt->from_int128(signed_input, sat,
+                                                     &status), ==, expected);
+                    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                                    flags);
+
+                    if (!sign) {
+                        status = make_accrued_status(mode);
+                        g_assert_cmphex(fmt->from_uint128(
+                            int128_make64(integer), sat, &status), ==,
+                            expected);
+                        g_assert_cmphex(get_float_exception_flags(&status), ==,
+                                        flags);
+                    }
                 }
             }
         }
@@ -842,6 +1435,40 @@ static void test_float8_sqrt_exhaustive(void)
     }
 }
 
+static void test_int128_canonical(void)
+{
+    FloatParts128 zero = uint128_unpack_canonical(int128_zero());
+
+    g_assert_cmpint(zero.cls, ==, float_class_zero);
+    g_assert_false(zero.sign);
+    for (unsigned bit = 0; bit < 128; bit++) {
+        Int128 input = int128_or(int128_lshift(int128_one(), bit),
+                                int128_one());
+        FloatParts128 p = uint128_unpack_canonical(input);
+        Int128 fraction = int128_make128(p.frac_lo, p.frac_hi);
+        Int128 recovered = int128_urshift(fraction, 127 - p.exp);
+
+        g_assert_cmpint(p.cls, ==, float_class_normal);
+        g_assert_false(p.sign);
+        g_assert_cmpint(p.exp, ==, bit);
+        g_assert_true(int128_eq(input, recovered));
+        if (bit < 127) {
+            p = int128_unpack_canonical(int128_neg(input));
+            fraction = int128_make128(p.frac_lo, p.frac_hi);
+            recovered = int128_urshift(fraction, 127 - p.exp);
+            g_assert_cmpint(p.cls, ==, float_class_normal);
+            g_assert_true(p.sign);
+            g_assert_true(int128_eq(input, recovered));
+        }
+    }
+    zero = int128_unpack_canonical(int128_lshift(int128_one(), 127));
+    g_assert_cmpint(zero.cls, ==, float_class_normal);
+    g_assert_true(zero.sign);
+    g_assert_cmpint(zero.exp, ==, 127);
+    g_assert_cmphex(zero.frac_hi, ==, UINT64_C(0x8000000000000000));
+    g_assert_cmphex(zero.frac_lo, ==, 0);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -868,5 +1495,15 @@ int main(int argc, char **argv)
     g_test_add_func("/softfloat/float8/sqrt", test_float8_sqrt);
     g_test_add_func("/softfloat/float8/sqrt-exhaustive",
                     test_float8_sqrt_exhaustive);
+    g_test_add_func("/softfloat/int128/direct-conversions",
+                    test_int128_direct_conversions);
+    g_test_add_func("/softfloat/int128/direct-rounding",
+                    test_int128_direct_rounding);
+    g_test_add_func("/softfloat/int128/word-boundaries",
+                    test_int128_word_boundaries);
+    g_test_add_func("/softfloat/int128/float128-rounding",
+                    test_int128_float128_rounding);
+    g_test_add_func("/softfloat/int128/reference", test_int128_reference);
+    g_test_add_func("/softfloat/int128/canonical", test_int128_canonical);
     return g_test_run();
 }

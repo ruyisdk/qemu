@@ -148,6 +148,9 @@ FloatParts64 bfloat16_unpack_canonical(bfloat16 f, float_status *s);
 FloatParts64 float32_unpack_canonical(float32 f, float_status *s);
 FloatParts64 float64_unpack_canonical(float64 f, float_status *s);
 FloatParts128 float128_unpack_canonical(float128 f, float_status *s);
+/* Exact normalization of a full-width integer; no rounding is performed. */
+FloatParts128 int128_unpack_canonical(Int128 a);
+FloatParts128 uint128_unpack_canonical(Int128 a);
 /* Returns false if the encoding is invalid. */
 bool floatx80_unpack_canonical(FloatParts128 *p, floatx80 f, float_status *s);
 

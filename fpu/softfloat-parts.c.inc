@@ -1462,6 +1462,48 @@ static void partsN(uint_to_float)(FloatPartsN *p, uint64_t a,
     }
 }
 
+/* Keep all integer bits until normalization, then jam for a narrower part. */
+static void partsN(uint128_to_float)(FloatPartsN *p, Int128 a)
+{
+    FloatParts128 magnitude = {
+        .frac_hi = int128_gethi(a),
+        .frac_lo = int128_getlo(a),
+    };
+    int shift = frac128_normalize(&magnitude);
+
+    memset(p, 0, sizeof(*p));
+    if (shift == 128) {
+        p->cls = float_class_zero;
+        return;
+    }
+    p->cls = float_class_normal;
+    p->exp = 127 - shift;
+#if N == 64
+    frac64_truncjam(p, &magnitude);
+#else
+    p->frac_hi = magnitude.frac_hi;
+    p->frac_lo = magnitude.frac_lo;
+#endif
+}
+
+static void partsN(sint128_to_float)(FloatPartsN *p, Int128 a)
+{
+    bool sign = !int128_nonneg(a);
+
+    if (sign) {
+        FloatParts128 magnitude = {
+            .frac_hi = int128_gethi(a),
+            .frac_lo = int128_getlo(a),
+        };
+
+        /* Unsigned fraction arithmetic also handles INT128_MIN. */
+        frac128_neg(&magnitude);
+        a = int128_make128(magnitude.frac_lo, magnitude.frac_hi);
+    }
+    partsN(uint128_to_float)(p, a);
+    p->sign = sign;
+}
+
 /*
  * Float min/max.
  */
