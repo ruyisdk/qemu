@@ -1,0 +1,30 @@
+# -*- Mode: makefile -*-
+# RISC-V specific tweaks
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+VPATH += $(SRC_PATH)/tests/tcg/riscv32
+VPATH += $(SRC_PATH)/tests/tcg/riscv
+
+# Export PSIMD_CC=/path/to/clang to enable these freestanding tests without
+# making the P-aware compiler the CC for every RISC-V TCG test.
+PSIMD_CFLAGS = --target=riscv32-unknown-linux-gnu \
+	-Wall -Werror -O0 -g -Wno-error=unused-command-line-argument \
+	-menable-experimental-extensions -march=rv32gp0p21 -mabi=ilp32
+PSIMD_LDFLAGS = -nostdlib -static -fuse-ld=lld -Wl,-e,_start
+
+ifneq ($(strip $(PSIMD_CC)),)
+TESTS += psimd-rv32
+endif
+
+psimd-rv32: psimd-rv32.S \
+	$(SRC_PATH)/tests/tcg/riscv/psimd-common.S \
+	$(SRC_PATH)/tests/tcg/riscv/psimd-test-macros.inc
+ifeq ($(strip $(PSIMD_CC)),)
+	$(error Set PSIMD_CC to a Clang with RISC-V P extension support)
+else
+	$(call quiet-command,$(PSIMD_CC) $(PSIMD_CFLAGS) -Wa$(COMMA)--noexecstack \
+		$< -o $@ $(PSIMD_LDFLAGS),CC,$@)
+endif
+
+run-psimd-rv32: QEMU_OPTS += \
+	-cpu rv32,x-p=true,zmmul=true,zba=true,zbb=true
