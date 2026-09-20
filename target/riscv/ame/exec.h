@@ -328,5 +328,233 @@ bool riscv_ame_exec_m_ternary_scalar(AmeImplClass impl, AmeOperation op,
                                      uint8_t *result_backing,
                                      size_t result_bytes,
                                      AmeExecFlags *flags);
+/**
+ * riscv_ame_exec_m_fill: Fill an M span with copies of raw element bits
+ * @layout: Backend geometry
+ * @destination: Validated destination view
+ * @value: Raw bits to copy; bits above the element width are ignored
+ * @result_backing: Separate output buffer for the destination span
+ * @result_bytes: Output capacity in bytes
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_fill(const RISCVAMELayout *layout,
+                           const AmeMView *destination,
+                           const AmeValue *value,
+                           uint8_t *result_backing,
+                           size_t result_bytes);
+/**
+ * riscv_ame_exec_m_permute: Broadcast or shift rows/columns of one M square
+ * @impl: COPY implementation
+ * @op: Row/column broadcast or shift operation
+ * @layout: Backend geometry
+ * @source_mregs: Complete M register file to read
+ * @destination: Validated single, unpacked square
+ * @source: Validated single, unpacked square with the same datatype
+ * @control: Broadcast index in [0, N), or signed shift offset
+ * @result_backing: Separate output buffer for the destination span
+ * @result_bytes: Output capacity in bytes
+ *
+ * Shifts fill positions outside the source square with zero bits.
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_permute(AmeImplClass impl, AmeOperation op,
+                              const RISCVAMELayout *layout,
+                              const uint8_t *source_mregs,
+                              const AmeMView *destination,
+                              const AmeMView *source,
+                              int32_t control,
+                              uint8_t *result_backing,
+                              size_t result_bytes);
+/**
+ * riscv_ame_exec_m_gather: Gather row/column elements using an index square
+ * @impl: COPY implementation
+ * @op: Row or column gather operation
+ * @layout: Backend geometry
+ * @source_mregs: Complete M register file to read
+ * @destination: Validated single, unpacked square
+ * @source: Validated single, unpacked square with the same datatype
+ * @indices: Validated single, unpacked integer square; indices wrap modulo N
+ * @result_backing: Separate output buffer for the destination span
+ * @result_bytes: Output capacity in bytes
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_gather(AmeImplClass impl, AmeOperation op,
+                             const RISCVAMELayout *layout,
+                             const uint8_t *source_mregs,
+                             const AmeMView *destination,
+                             const AmeMView *source,
+                             const AmeMView *indices,
+                             uint8_t *result_backing,
+                             size_t result_bytes);
+/**
+ * riscv_ame_exec_m_index: Fill each square with row or column indices
+ * @impl: INT_INDEX implementation
+ * @op: ROWID or COLID operation
+ * @layout: Backend geometry
+ * @destination: Validated integer destination view
+ * @result_backing: Separate output buffer for the destination span
+ * @result_bytes: Output capacity in bytes
+ *
+ * Restart indices at zero for each logical square.
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_index(AmeImplClass impl, AmeOperation op,
+                            const RISCVAMELayout *layout,
+                            const AmeMView *destination,
+                            uint8_t *result_backing,
+                            size_t result_bytes);
+
+/**
+ * riscv_ame_exec_m_zip: Interleave or deinterleave two M squares
+ * @impl: COPY implementation
+ * @op: Row/column zip or unzip operation
+ * @layout: Backend geometry
+ * @source_mregs: Complete M register file to read
+ * @first: First validated single, unpacked square, read and replaced
+ * @second: Second validated square of the same datatype, read and replaced
+ * @result_backing: Separate output buffer; first result followed by second
+ * @result_bytes: Capacity in bytes, sufficient for both physical spans
+ *
+ * Returns: true if both results are staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_zip(AmeImplClass impl, AmeOperation op,
+                          const RISCVAMELayout *layout,
+                          const uint8_t *source_mregs,
+                          const AmeMView *first,
+                          const AmeMView *second,
+                          uint8_t *result_backing,
+                          size_t result_bytes);
+/**
+ * riscv_ame_exec_m_pack: Convert a square into one selected packed square
+ * @impl: Selected conversion implementation
+ * @layout: Backend geometry
+ * @source_mregs: Complete M register file, including the old destination
+ * @destination: Validated packed view with n_sq equal to pack_factor
+ * @source: Validated single, unpacked source square
+ * @index: Destination square number below destination->pack_factor
+ * @result_backing: Separate output buffer for the complete destination span
+ * @result_bytes: Output capacity in bytes
+ * @flags: Output exception/saturation flags from conversion
+ *
+ * Preserve the destination's other packed squares in the staged result.
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_pack(AmeImplClass impl,
+                           const RISCVAMELayout *layout,
+                           const uint8_t *source_mregs,
+                           const AmeMView *destination,
+                           const AmeMView *source,
+                           uint32_t index,
+                           uint8_t *result_backing,
+                           size_t result_bytes,
+                           AmeExecFlags *flags);
+/**
+ * riscv_ame_exec_m_unpack: Convert a selected packed square to unpacked form
+ * @impl: Selected conversion implementation
+ * @layout: Backend geometry
+ * @source_mregs: Complete M register file to read
+ * @destination: Validated single, unpacked destination square
+ * @source: Validated packed view with n_sq equal to pack_factor
+ * @index: Source square number below source->pack_factor
+ * @result_backing: Separate output buffer for the destination span
+ * @result_bytes: Output capacity in bytes
+ * @flags: Output exception/saturation flags from conversion
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_unpack(AmeImplClass impl,
+                             const RISCVAMELayout *layout,
+                             const uint8_t *source_mregs,
+                             const AmeMView *destination,
+                             const AmeMView *source,
+                             uint32_t index,
+                             uint8_t *result_backing,
+                             size_t result_bytes,
+                             AmeExecFlags *flags);
+/**
+ * riscv_ame_exec_m_scan: Compute row/column prefixes or reductions per square
+ * @impl: INT_REDUCE or FP_REDUCE implementation
+ * @op: Prefix/reduce operation selecting the axis and arithmetic
+ * @layout: Backend geometry
+ * @source_mregs: Complete M register file to read
+ * @destination: Validated destination view
+ * @source: Validated source with the same square and element counts
+ * @result_backing: Separate output buffer for the destination span
+ * @result_bytes: Output capacity in bytes
+ * @flags: Output exception/saturation flags combined across all steps
+ *
+ * Prefixes include the current element. Reductions repeat the final value
+ * along the reduced axis. Process each logical square independently.
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_scan(AmeImplClass impl, AmeOperation op,
+                           const RISCVAMELayout *layout,
+                           const uint8_t *source_mregs,
+                           const AmeMView *destination,
+                           const AmeMView *source,
+                           uint8_t *result_backing,
+                           size_t result_bytes,
+                           AmeExecFlags *flags);
+/**
+ * riscv_ame_exec_m_scatter: Accumulate indexed contributions into an M square
+ * @impl: INT_SCATTER or FP_SCATTER implementation
+ * @op: Row/column scatter-add or scatter-max operation
+ * @layout: Backend geometry
+ * @source_mregs: Complete M register file, including the old destination
+ * @destination: Validated single, unpacked destination square
+ * @source: Validated single, unpacked contribution square
+ * @indices: Validated single, unpacked integer square; indices wrap modulo N
+ * @result_backing: Separate output buffer initialized from old destination
+ * @result_bytes: Output capacity in bytes
+ * @flags: Output exception/saturation flags combined across all contributions
+ *
+ * Process contributions in row-major order, combining repeated target indices.
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_m_scatter(AmeImplClass impl, AmeOperation op,
+                              const RISCVAMELayout *layout,
+                              const uint8_t *source_mregs,
+                              const AmeMView *destination,
+                              const AmeMView *source,
+                              const AmeMView *indices,
+                              uint8_t *result_backing,
+                              size_t result_bytes,
+                              AmeExecFlags *flags);
+/**
+ * riscv_ame_exec_acc_matmul: Accumulate M matrix products into one Acc square
+ * @impl: INT_MATMUL or FP_MATMUL implementation
+ * @op: Matrix operation selecting product sign and source transpositions
+ * @layout: Backend geometry
+ * @source_mregs: Complete M register file to read
+ * @source_accs: Complete Acc register file, including the old destination
+ * @destination: Validated Acc view; old values initialize the accumulation
+ * @source1: Validated A view
+ * @source2: Validated B view with the same n_sq as A
+ * @result_backing: Separate output buffer for one physical Acc register
+ * @result_bytes: Output capacity in bytes, at least layout->acc_bytes
+ * @flags: Output exception/saturation flags combined across the result square
+ *
+ * Sum contributions from all n_sq source squares into the same N x N Acc.
+ * Preserve unused Acc storage bytes in the staged result.
+ *
+ * Returns: true if the full result is staged; false for invalid input or size.
+ */
+bool riscv_ame_exec_acc_matmul(AmeImplClass impl, AmeOperation op,
+                               const RISCVAMELayout *layout,
+                               const uint8_t *source_mregs,
+                               const uint8_t *source_accs,
+                               const AmeAccView *destination,
+                               const AmeMView *source1,
+                               const AmeMView *source2,
+                               uint8_t *result_backing,
+                               size_t result_bytes,
+                               AmeExecFlags *flags);
 
 #endif /* TARGET_RISCV_AME_EXEC_H */
