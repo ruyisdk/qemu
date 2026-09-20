@@ -146,6 +146,48 @@ The following machine-specific options are supported:
 
   Enables the riscv-iommu-sys platform device. Defaults to 'off'.
 
+- x-ame-backends=nnn
+
+  Number of shared AME backend slots. Defaults to 1 and must be between
+  1 and the number of CPUs started by ``-smp`` (not ``maxcpus``).
+  See :ref:`riscv-virt-ame`.
+
+- x-ame-backend-enabled=[on|off]
+
+  Defaults to 'on'. Setting it to 'off' makes acquisition unavailable;
+  it does not disable the CPU's Ztt instruction extension.
+
+.. _riscv-virt-ame:
+
+Using the Attached Matrix Extension
+-----------------------------------
+
+Enable the experimental :ref:`Ztt extension <riscv-ztt>` with
+``-cpu rv64,x-ztt=on`` (or ``rv32``) and ``-accel tcg``.
+
+For a single-hart bare-metal application::
+
+  qemu-system-riscv64 \
+      -machine virt,x-ame-backends=1 \
+      -accel tcg -smp 1 \
+      -cpu rv64,x-ztt=on,amenlen=8,ameudsz=8,ame-num-mregs=32,ame-num-accregs=4 \
+      -bios none -display none -serial stdio -monitor none \
+      -device loader,file=app.elf
+
+``app.elf`` is an M-mode bare-metal ELF with its entry point at ``0x80000000``.
+
+``amenlen`` sets the matrix dimension N; ``ameudsz`` sets the datapath width U
+in bits.  ``ame-num-mregs`` and ``ame-num-accregs`` set the M and Acc register
+counts.
+
+The harts share an AME backend pool.  For two harts sharing one backend,
+use ``-smp 2`` with ``x-ame-backends=1``.  Set ``x-ame-backends=2`` to allow
+both harts to own a backend concurrently.  ``ame.acquire`` selects a free
+backend.
+
+See :ref:`riscv-ztt` for CPU property ranges and defaults, supported
+operations and initialization.
+
 Running Linux kernel
 --------------------
 

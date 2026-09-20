@@ -76,6 +76,14 @@ undocumented; you can get a complete list by running
    riscv/virt
    riscv/xiangshan-kunminghu
 
+CPU extensions
+--------------
+
+.. toctree::
+   :maxdepth: 1
+
+   riscv/ztt
+
 RISC-V CPU firmware
 -------------------
 
