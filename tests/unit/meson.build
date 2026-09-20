@@ -54,6 +54,10 @@ tests = {
     '../../target/riscv/ame/tuple-set.c',
     '../../target/riscv/ame/cap-set.c',
   ],
+  'test-riscv-ame-int': [
+    '../../target/riscv/ame/datatype.c',
+    '../../target/riscv/ame/int.c',
+  ],
   'test-riscv-ame-layout': [
     '../../target/riscv/ame/datatype.c',
     '../../target/riscv/ame/cap-set.c',

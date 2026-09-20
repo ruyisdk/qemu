@@ -5,5 +5,9 @@ riscv_ss.add(files(
   'tuple-set.c',
 ))
 
+riscv_ss.add(when: 'CONFIG_TCG', if_true: files(
+  'int.c',
+))
+
 riscv_system_ss.add(files(
 ))
