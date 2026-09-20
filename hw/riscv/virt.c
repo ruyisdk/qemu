@@ -1309,6 +1309,20 @@ static void virt_machine_init(MachineState *machine)
 
     s->memmap = virt_memmap;
 
+    if (s->ame_backends == 0) {
+        error_report("x-ame-backends must be greater than zero");
+        exit(1);
+    }
+    if (s->ame_backends > machine->smp.cpus) {
+        error_report("x-ame-backends cannot exceed the number of CPUs "
+                     "(%u > %u)", s->ame_backends, machine->smp.cpus);
+        exit(1);
+    }
+    object_property_set_int(OBJECT(&s->ame_pool), "num-slots",
+                            s->ame_backends, &error_abort);
+    object_property_set_bool(OBJECT(&s->ame_pool), "enabled",
+                             s->ame_backend_enabled, &error_abort);
+
     /* Check socket count limit */
     if (VIRT_SOCKETS_MAX < socket_count) {
         error_report("number of sockets/nodes should be less than %d",
@@ -1351,6 +1365,8 @@ static void virt_machine_init(MachineState *machine)
                                 base_hartid, &error_abort);
         object_property_set_int(OBJECT(&s->soc[i]), "num-harts",
                                 hart_count, &error_abort);
+        object_property_set_link(OBJECT(&s->soc[i]), "ame-backend-pool",
+                                 OBJECT(&s->ame_pool), &error_abort);
         sysbus_realize(SYS_BUS_DEVICE(&s->soc[i]), &error_fatal);
 
         if (virt_aclint_allowed() && s->have_aclint) {
@@ -1424,6 +1440,8 @@ static void virt_machine_init(MachineState *machine)
             pcie_irqchip = s->irqchip[i];
         }
     }
+
+    qdev_realize(DEVICE(&s->ame_pool), NULL, &error_fatal);
 
     if (kvm_enabled() && virt_use_kvm_aia_aplic_imsic(s->aia_type)) {
         kvm_riscv_aia_create(machine, IMSIC_MMIO_GROUP_MIN_SHIFT,
@@ -1551,6 +1569,8 @@ static void virt_machine_instance_init(Object *obj)
 {
     RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
 
+    object_initialize_child(obj, "ame-backend-pool", &s->ame_pool,
+                            TYPE_RISCV_AME_BACKEND_POOL);
     virt_flash_create(s);
 
     s->oem_id = g_strndup(ACPI_BUILD_APPNAME6, 6);
@@ -1558,6 +1578,53 @@ static void virt_machine_instance_init(Object *obj)
     s->acpi = ON_OFF_AUTO_AUTO;
     s->iommu_sys = ON_OFF_AUTO_AUTO;
     s->num_sources = VIRT_IRQCHIP_NUM_SOURCES;
+    s->ame_backends = 1;
+    s->ame_backend_enabled = true;
+}
+
+static void virt_get_ame_backends(Object *obj, Visitor *v, const char *name,
+                                  void *opaque, Error **errp)
+{
+    RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+    uint32_t value = s->ame_backends;
+
+    visit_type_uint32(v, name, &value, errp);
+}
+
+static void virt_set_ame_backends(Object *obj, Visitor *v, const char *name,
+                                  void *opaque, Error **errp)
+{
+    RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+    uint32_t value;
+
+    if (phase_check(PHASE_MACHINE_INITIALIZED)) {
+        error_setg(errp, "%s cannot be changed after machine "
+                   "initialization", name);
+        return;
+    }
+    if (visit_type_uint32(v, name, &value, errp)) {
+        s->ame_backends = value;
+    }
+}
+
+static bool virt_get_ame_backend_enabled(Object *obj, Error **errp)
+{
+    RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+
+    return s->ame_backend_enabled;
+}
+
+static void virt_set_ame_backend_enabled(Object *obj, bool value,
+                                         Error **errp)
+{
+    RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+
+    if (phase_check(PHASE_MACHINE_INITIALIZED)) {
+        error_setg(errp, "x-ame-backend-enabled cannot be changed after "
+                   "machine initialization");
+        return;
+    }
+    s->ame_backend_enabled = value;
 }
 
 static char *virt_get_aia_guests(Object *obj, Error **errp)
@@ -1750,6 +1817,17 @@ static void virt_machine_class_init(ObjectClass *oc, const void *data)
                                           "(TCG only) Set on/off to "
                                           "enable/disable emulating "
                                           "ACLINT devices");
+
+    object_class_property_add(oc, "x-ame-backends", "uint32",
+                              virt_get_ame_backends, virt_set_ame_backends,
+                              NULL, NULL);
+    object_class_property_set_description(oc, "x-ame-backends",
+                                          "Number of shared AME backends");
+    object_class_property_add_bool(oc, "x-ame-backend-enabled",
+                                   virt_get_ame_backend_enabled,
+                                   virt_set_ame_backend_enabled);
+    object_class_property_set_description(oc, "x-ame-backend-enabled",
+                                          "Enable shared AME backends");
 
     object_class_property_add_str(oc, "aia", virt_get_aia,
                                   virt_set_aia);

@@ -24,6 +24,7 @@
 #include "hw/core/sysbus.h"
 #include "hw/block/flash.h"
 #include "hw/intc/riscv_imsic.h"
+#include "target/riscv/ame/pool.h"
 
 #define VIRT_CPUS_MAX_BITS             9
 #define VIRT_CPUS_MAX                  (1 << VIRT_CPUS_MAX_BITS)
@@ -48,6 +49,9 @@ struct RISCVVirtState {
     /*< public >*/
     Notifier machine_done;
     DeviceState *platform_bus_dev;
+    RISCVAMEBackendPool ame_pool;
+    uint32_t ame_backends;
+    bool ame_backend_enabled;
     RISCVHartArrayState soc[VIRT_SOCKETS_MAX];
     DeviceState *irqchip[VIRT_SOCKETS_MAX];
     PFlashCFI01 *flash[2];

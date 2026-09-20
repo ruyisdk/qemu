@@ -25,6 +25,8 @@
 #include "target/riscv/cpu.h"
 #include "qom/object.h"
 
+struct RISCVAMEBackendPool;
+
 #define TYPE_RISCV_HART_ARRAY "riscv.hart_array"
 
 OBJECT_DECLARE_SIMPLE_TYPE(RISCVHartArrayState, RISCV_HART_ARRAY)
@@ -42,6 +44,7 @@ struct RISCVHartArrayState {
     uint64_t *rnmi_irqvec;
     uint32_t num_rnmi_excpvec;
     uint64_t *rnmi_excpvec;
+    struct RISCVAMEBackendPool *ame_pool;
     RISCVCPU *harts;
 };
 

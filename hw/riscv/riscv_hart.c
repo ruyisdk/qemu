@@ -26,6 +26,7 @@
 #include "qemu/cutils.h"
 #include "hw/core/sysbus.h"
 #include "target/riscv/cpu.h"
+#include "target/riscv/ame/pool.h"
 #include "hw/core/qdev-properties.h"
 #include "hw/riscv/riscv_hart.h"
 #include "qemu/error-report.h"
@@ -36,6 +37,8 @@ static const Property riscv_harts_props[] = {
     DEFINE_PROP_STRING("cpu-type", RISCVHartArrayState, cpu_type),
     DEFINE_PROP_UINT64("resetvec", RISCVHartArrayState, resetvec,
                        DEFAULT_RSTVEC),
+    DEFINE_PROP_LINK("ame-backend-pool", RISCVHartArrayState, ame_pool,
+                     TYPE_RISCV_AME_BACKEND_POOL, RISCVAMEBackendPool *),
 
     /*
      * Smrnmi implementation-defined interrupt and exception trap handlers.
@@ -116,6 +119,11 @@ static bool riscv_hart_realize(RISCVHartArrayState *s, int idx,
 {
     object_initialize_child(OBJECT(s), "harts[*]", &s->harts[idx], cpu_type);
     qdev_prop_set_uint64(DEVICE(&s->harts[idx]), "resetvec", s->resetvec);
+    if (s->ame_pool != NULL) {
+        object_property_set_link(OBJECT(&s->harts[idx]),
+                                 "ame-backend-pool", OBJECT(s->ame_pool),
+                                 &error_abort);
+    }
 
     if (s->harts[idx].cfg.ext_smrnmi) {
         if (idx < s->num_rnmi_irqvec) {
