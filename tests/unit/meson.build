@@ -63,6 +63,13 @@ tests = {
   'test-riscv-ame-insn': [
     riscv_ztt_decode,
   ],
+  'test-riscv-ame-disas': [
+    '../../disas/riscv.c',
+    '../../disas/riscv-ame.c',
+    '../../disas/riscv-xthead.c',
+    '../../disas/riscv-xventana.c',
+    '../../disas/riscv-xlrbr.c',
+  ],
   'test-riscv-ame-exec': [
     '../../target/riscv/ame/datatype.c',
     '../../target/riscv/ame/cap-set.c',

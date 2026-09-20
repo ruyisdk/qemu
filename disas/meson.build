@@ -6,6 +6,7 @@ common_ss.add(when: 'CONFIG_MICROBLAZE_DIS', if_true: files('microblaze.c'))
 common_ss.add(when: 'CONFIG_MIPS_DIS', if_true: files('mips.c', 'nanomips.c'))
 common_ss.add(when: 'CONFIG_RISCV_DIS', if_true: files(
     'riscv.c',
+    'riscv-ame.c',
     'riscv-xthead.c',
     'riscv-xventana.c',
     'riscv-xlrbr.c'

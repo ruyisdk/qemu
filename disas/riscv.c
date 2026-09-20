@@ -22,6 +22,7 @@
 #include "disas/dis-asm.h"
 #include "target/riscv/cpu_cfg.h"
 #include "disas/riscv.h"
+#include "disas/riscv-ame.h"
 
 /* Vendor extensions */
 #include "disas/riscv-xthead.h"
@@ -4695,6 +4696,11 @@ static void decode_inst_operands(rv_decode *dec, rv_isa isa)
         dec->succ = operand_succ(inst);
         dec->imm = 0;
         break;
+    case rv_codec_ame:
+        dec->rd = operand_rd(inst);
+        dec->rs1 = operand_rs1(inst);
+        dec->rs2 = operand_rs2(inst);
+        break;
     case rv_codec_cb:
         dec->rd = rv_ireg_zero;
         dec->rs1 = operand_crs1q(inst) + 8;
@@ -5335,6 +5341,34 @@ static GString *format_inst(size_t tab, rv_decode *dec)
         case 'h':
             g_string_append(buf, rv_fli_name_const[dec->imm]);
             break;
+        /* AME M-register fields rd, rs1 and rs2. */
+        case 'M':
+            g_string_append_printf(buf, "m%u", dec->rd);
+            break;
+        case 'N':
+            g_string_append_printf(buf, "m%u", dec->rs1);
+            break;
+        case 'P':
+            g_string_append_printf(buf, "m%u", dec->rs2);
+            break;
+        /* AME accumulator-register fields rd, rs1 and rs2. */
+        case 'B':
+            g_string_append_printf(buf, "acc%u", dec->rd);
+            break;
+        case 'C':
+            g_string_append_printf(buf, "acc%u", dec->rs1);
+            break;
+        case 'H':
+            g_string_append_printf(buf, "acc%u", dec->rs2);
+            break;
+        case 'W':
+        case 'X':
+        case 'Y':
+        case 'Z':
+            /* AME sw, sr, pw and pr are consecutive bits 7 through 10. */
+            g_string_append_printf(buf, "%u",
+                                   extract32(dec->inst, 7 + *fmt - 'W', 1));
+            break;
         default:
             break;
         }
@@ -5441,6 +5475,7 @@ static GString *disasm_inst(rv_isa isa, uint64_t pc, rv_inst inst,
         void (*decode_func)(rv_decode *, rv_isa);
     } decoders[] = {
         { always_true_p, rvi_opcode_data, decode_inst_opcode },
+        { has_ztt_p, ame_opcode_data, decode_ame },
         { has_xtheadba_p, xthead_opcode_data, decode_xtheadba },
         { has_xtheadbb_p, xthead_opcode_data, decode_xtheadbb },
         { has_xtheadbs_p, xthead_opcode_data, decode_xtheadbs },
