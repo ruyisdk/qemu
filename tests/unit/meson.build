@@ -40,6 +40,9 @@ tests = {
   'test-qtree': [],
   'test-bitops': [],
   'test-bitcnt': [],
+  'test-riscv-ame-datatype': [
+    '../../target/riscv/ame/datatype.c',
+  ],
   'test-qgraph': ['../qtest/libqos/qgraph.c'],
   'check-qom-interface': [qom],
   'check-qom-proplist': [qom],

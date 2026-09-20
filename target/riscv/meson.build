@@ -28,6 +28,7 @@ riscv_system_ss.add(files(
   'riscv-qmp-cmds.c',
 ))
 
+subdir('ame')
 subdir('tcg')
 subdir('kvm')
 
