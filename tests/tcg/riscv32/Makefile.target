@@ -1,0 +1,5 @@
+# Copyright (c) 2026 Alibaba Group
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+include $(SRC_PATH)/tests/tcg/riscv/Makefile.ztt-target

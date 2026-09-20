@@ -2,6 +2,7 @@
 # RISC-V specific tweaks
 
 VPATH += $(SRC_PATH)/tests/tcg/riscv64
+include $(SRC_PATH)/tests/tcg/riscv/Makefile.ztt-target
 TESTS += test-div
 TESTS += noexec
 

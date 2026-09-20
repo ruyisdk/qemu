@@ -1,0 +1,108 @@
+# Copyright (c) 2026 Alibaba Group
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+ZTT_TEST_SRC := $(SRC_PATH)/tests/tcg/riscv/ztt
+VPATH += $(ZTT_TEST_SRC)
+ZTT_LINK_SCRIPT := $(ZTT_TEST_SRC)/semihost.ld
+ZTT_XLEN := $(patsubst riscv%,%,$(TARGET_NAME))
+ZTT_MABI := $(if $(filter 32,$(ZTT_XLEN)),ilp32,lp64)
+ZTT_MARCH := rv$(ZTT_XLEN)imac_zicsr
+
+ZTT_SYSTEM_TESTS := \
+	ztt-system-backend-disabled \
+	ztt-system-control \
+	ztt-system-csr \
+	ztt-system-decode \
+	ztt-system-disabled \
+	ztt-system-na16 \
+	ztt-system-priv \
+	ztt-system-shared \
+	ztt-system-stress \
+	ztt-system-stress-full \
+	ztt-system-wait \
+	ztt-system-waiters
+
+ZTT_SYSTEM_DIRECT_TESTS := $(filter-out \
+	ztt-system-stress-full,$(ZTT_SYSTEM_TESTS))
+
+TESTS += $(ZTT_SYSTEM_TESTS)
+
+ZTT_TEST_MARCH = $(ZTT_MARCH)
+ZTT_SYSTEM_CFLAGS = $(filter-out -march=% -mabi=%,$(CFLAGS)) \
+	$(EXTRA_CFLAGS) -march=$(ZTT_TEST_MARCH) -mabi=$(ZTT_MABI)
+
+$(addsuffix .o,$(ZTT_SYSTEM_DIRECT_TESTS)): %.o: $(ZTT_TEST_SRC)/%.S
+	$(CC) $(ZTT_SYSTEM_CFLAGS) $(ZTT_TEST_CFLAGS) $< \
+		-Wa,--noexecstack -c -o $@
+ztt-system-priv.o: ZTT_TEST_MARCH = rv$(ZTT_XLEN)imach_zicsr
+
+$(ZTT_SYSTEM_DIRECT_TESTS): %: %.o $(ZTT_LINK_SCRIPT)
+	$(CC) $(ZTT_SYSTEM_CFLAGS) -nostdlib -static \
+		-Wl,--build-id=none -Wl,-T,$(ZTT_LINK_SCRIPT) $< -o $@
+
+ztt-system-stress-full.o: $(ZTT_TEST_SRC)/ztt-system-stress.S
+	$(CC) $(ZTT_SYSTEM_CFLAGS) -DZTT_STRESS_BACKENDS=3 $< \
+		-Wa,--noexecstack -c -o $@
+ztt-system-stress-full: ztt-system-stress-full.o $(ZTT_LINK_SCRIPT)
+	$(CC) $(ZTT_SYSTEM_CFLAGS) -nostdlib -static \
+		-Wl,--build-id=none -Wl,-T,$(ZTT_LINK_SCRIPT) $< -o $@
+
+ZTT_CPU = rv$(ZTT_XLEN)$(COMMA)x-ztt=true
+ZTT_CPU_SMALL := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=8
+ZTT_CPU_SMALL := $(ZTT_CPU_SMALL)$(COMMA)ame-num-mregs=16
+ZTT_CPU_SMALL := $(ZTT_CPU_SMALL)$(COMMA)ame-num-accregs=1
+ZTT_CPU_NA16 := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=8
+ZTT_CPU_NA16 := $(ZTT_CPU_NA16)$(COMMA)ame-num-mregs=16
+ZTT_CPU_NA16 := $(ZTT_CPU_NA16)$(COMMA)ame-num-accregs=16
+ZTT_CPU_DECODE := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=16
+ZTT_CPU_DECODE := $(ZTT_CPU_DECODE)$(COMMA)ame-num-mregs=16
+ZTT_CPU_DECODE := $(ZTT_CPU_DECODE)$(COMMA)ame-num-accregs=1
+
+ZTT_SMALL_TESTS := \
+	ztt-system-backend-disabled ztt-system-control ztt-system-csr \
+	ztt-system-priv \
+	ztt-system-shared ztt-system-stress ztt-system-stress-full \
+	ztt-system-wait ztt-system-waiters
+
+$(addprefix run-,$(ZTT_SMALL_TESTS)): ZTT_RUN_CPU = $(ZTT_CPU_SMALL)
+run-ztt-system-na16: ZTT_RUN_CPU = $(ZTT_CPU_NA16)
+run-ztt-system-decode: ZTT_RUN_CPU = $(ZTT_CPU_DECODE)
+run-ztt-system-priv: ZTT_RUN_CPU := $(ZTT_CPU_SMALL)$(COMMA)h=true
+run-ztt-system-disabled: ZTT_RUN_CPU = rv$(ZTT_XLEN)
+
+ZTT_RUN_MACHINE = virt
+ZTT_RUN_SMP = 1
+ZTT_RUN_ACCEL = tcg
+run-ztt-system-backend-disabled: ZTT_RUN_MACHINE := virt$(COMMA)x-ame-backend-enabled=off
+run-ztt-system-shared run-ztt-system-wait: ZTT_RUN_MACHINE := virt$(COMMA)x-ame-backends=1
+run-ztt-system-shared run-ztt-system-wait: ZTT_RUN_SMP = 2
+run-ztt-system-stress: ZTT_RUN_MACHINE := virt$(COMMA)x-ame-backends=2
+run-ztt-system-stress: ZTT_RUN_SMP = 3
+run-ztt-system-stress: ZTT_RUN_ACCEL := tcg$(COMMA)thread=multi
+run-ztt-system-stress-full: ZTT_RUN_MACHINE := virt$(COMMA)x-ame-backends=3
+run-ztt-system-stress-full: ZTT_RUN_SMP = 3
+run-ztt-system-stress-full: ZTT_RUN_ACCEL := tcg$(COMMA)thread=multi
+run-ztt-system-waiters: ZTT_RUN_MACHINE := virt$(COMMA)x-ame-backends=1
+run-ztt-system-waiters: ZTT_RUN_SMP = 3
+run-ztt-system-waiters: ZTT_RUN_ACCEL := tcg$(COMMA)thread=multi
+
+run-ztt-system-%: ztt-system-%
+	$(call run-test, $<, \
+	  $(QEMU) -machine $(ZTT_RUN_MACHINE) -bios none -display none \
+	  -semihosting -device loader$(COMMA)file=$< -smp $(ZTT_RUN_SMP) \
+	  -accel $(ZTT_RUN_ACCEL) -cpu $(ZTT_RUN_CPU))
+
+EXTRA_RUNS += run-ztt-system-wait-single run-ztt-system-wait-icount
+run-ztt-system-wait-single: ztt-system-wait
+	$(call run-test, $@, \
+	  $(QEMU) -machine virt$(COMMA)x-ame-backends=1 -bios none \
+	  -display none -semihosting -device loader$(COMMA)file=$< -smp 2 \
+	  -accel tcg$(COMMA)thread=single -cpu $(ZTT_CPU_SMALL))
+run-ztt-system-wait-icount: ztt-system-wait
+	$(call run-test, $@, \
+	  $(QEMU) -machine virt$(COMMA)x-ame-backends=1 -bios none \
+	  -display none -semihosting -device loader$(COMMA)file=$< -smp 2 \
+	  -accel tcg$(COMMA)thread=single \
+	  -icount shift=0$(COMMA)align=off$(COMMA)sleep=off \
+	  -cpu $(ZTT_CPU_SMALL))

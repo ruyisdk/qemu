@@ -1,0 +1,28 @@
+# Copyright (c) 2026 Alibaba Group
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+ZTT_TEST_SRC := $(SRC_PATH)/tests/tcg/riscv/ztt
+VPATH += $(ZTT_TEST_SRC)
+ZTT_XLEN := $(patsubst riscv%,%,$(TARGET_NAME))
+ZTT_MABI := $(if $(filter 32,$(ZTT_XLEN)),ilp32,lp64)
+ZTT_MARCH := rv$(ZTT_XLEN)imac_zicsr
+
+ZTT_USER_TESTS := \
+	ztt-user-control \
+	ztt-user-thread
+
+TESTS += $(ZTT_USER_TESTS)
+
+$(ZTT_USER_TESTS): %: $(ZTT_TEST_SRC)/%.S
+	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) -march=$(ZTT_MARCH) \
+		-mabi=$(ZTT_MABI) -nostdlib -static \
+		-Wl,--build-id=none -Wa,--noexecstack $< -o $@
+
+ZTT_USER_CPU = rv$(ZTT_XLEN)$(COMMA)x-ztt=true$(COMMA)amenlen=4
+ZTT_USER_CPU := $(ZTT_USER_CPU)$(COMMA)ameudsz=8
+ZTT_USER_CPU := $(ZTT_USER_CPU)$(COMMA)ame-num-mregs=16
+ZTT_USER_CPU := $(ZTT_USER_CPU)$(COMMA)ame-num-accregs=1
+
+$(addprefix run-,$(ZTT_USER_TESTS)): \
+	QEMU_OPTS += -cpu $(ZTT_USER_CPU)

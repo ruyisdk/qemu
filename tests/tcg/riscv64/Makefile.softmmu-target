@@ -16,6 +16,8 @@ CFLAGS += -g -Og
 
 QEMU_OPTS += -M virt -display none -semihosting -device loader,file=
 
+include $(SRC_PATH)/tests/tcg/riscv/Makefile.ztt-softmmu-target
+
 EXTRA_RUNS += run-issue1060
 run-issue1060: issue1060
 	$(call run-test, $<, $(QEMU) $(QEMU_OPTS)$<)
