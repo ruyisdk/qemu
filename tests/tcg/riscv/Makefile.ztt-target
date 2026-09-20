@@ -17,6 +17,7 @@ ZTT_USER_TESTS := \
 	ztt-user-integer-fused \
 	ztt-user-integer-narrow \
 	ztt-user-matrix \
+	ztt-user-memory \
 	ztt-user-mixed-numeric \
 	ztt-user-reduce-scatter \
 	ztt-user-structural \

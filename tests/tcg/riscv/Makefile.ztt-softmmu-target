@@ -14,6 +14,8 @@ ZTT_SYSTEM_TESTS := \
 	ztt-system-control \
 	ztt-system-convert \
 	ztt-system-csr \
+	ztt-system-debug-narrow \
+	ztt-system-debug \
 	ztt-system-decode \
 	ztt-system-disabled \
 	ztt-system-elementwise \
@@ -25,6 +27,9 @@ ZTT_SYSTEM_TESTS := \
 	ztt-system-matrix-int128 \
 	ztt-system-mixed-numeric \
 	ztt-system-matrix \
+	ztt-system-memory-exception \
+	ztt-system-memory-tcg \
+	ztt-system-memory \
 	ztt-system-move-na1 \
 	ztt-system-na16 \
 	ztt-system-move \
@@ -90,6 +95,12 @@ ZTT_CPU_MOVE := $(ZTT_CPU_MOVE)$(COMMA)ame-num-accregs=4
 ZTT_CPU_NA16 := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=8
 ZTT_CPU_NA16 := $(ZTT_CPU_NA16)$(COMMA)ame-num-mregs=16
 ZTT_CPU_NA16 := $(ZTT_CPU_NA16)$(COMMA)ame-num-accregs=16
+ZTT_CPU_DEBUG := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=16
+ZTT_CPU_DEBUG := $(ZTT_CPU_DEBUG)$(COMMA)ame-num-mregs=16
+ZTT_CPU_DEBUG := $(ZTT_CPU_DEBUG)$(COMMA)ame-num-accregs=1
+ZTT_CPU_DEBUG_NARROW := $(ZTT_CPU)$(COMMA)amenlen=1$(COMMA)ameudsz=8
+ZTT_CPU_DEBUG_NARROW := $(ZTT_CPU_DEBUG_NARROW)$(COMMA)ame-num-mregs=16
+ZTT_CPU_DEBUG_NARROW := $(ZTT_CPU_DEBUG_NARROW)$(COMMA)ame-num-accregs=1
 ZTT_CPU_DECODE := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=16
 ZTT_CPU_DECODE := $(ZTT_CPU_DECODE)$(COMMA)ame-num-mregs=16
 ZTT_CPU_DECODE := $(ZTT_CPU_DECODE)$(COMMA)ame-num-accregs=1
@@ -102,16 +113,20 @@ ZTT_CPU_FP := $(ZTT_CPU_FP)$(COMMA)ame-num-accregs=1
 ZTT_CPU_OCP := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=32
 ZTT_CPU_OCP := $(ZTT_CPU_OCP)$(COMMA)ame-num-mregs=16
 ZTT_CPU_OCP := $(ZTT_CPU_OCP)$(COMMA)ame-num-accregs=4
+ZTT_CPU_MAX := $(ZTT_CPU)$(COMMA)amenlen=128$(COMMA)ameudsz=64
+ZTT_CPU_MAX := $(ZTT_CPU_MAX)$(COMMA)ame-num-mregs=32
+ZTT_CPU_MAX := $(ZTT_CPU_MAX)$(COMMA)ame-num-accregs=16
 
 ZTT_SMALL_TESTS := \
 	ztt-system-backend-disabled ztt-system-control ztt-system-csr \
 	ztt-system-helper-globals \
+	ztt-system-memory-exception ztt-system-memory-tcg \
 	ztt-system-move-na1 ztt-system-priv \
 	ztt-system-shared ztt-system-stress ztt-system-stress-full \
 	ztt-system-wait ztt-system-waiters
 ZTT_INT_TESTS := \
 	ztt-system-convert ztt-system-elementwise ztt-system-integer-fused \
-	ztt-system-matrix ztt-system-reduce-int128 \
+	ztt-system-matrix ztt-system-memory ztt-system-reduce-int128 \
 	ztt-system-reduce-scatter ztt-system-scatter-widen \
 	ztt-system-structural ztt-system-zip
 
@@ -119,6 +134,8 @@ $(addprefix run-,$(ZTT_SMALL_TESTS)): ZTT_RUN_CPU = $(ZTT_CPU_SMALL)
 $(addprefix run-,$(ZTT_INT_TESTS)): ZTT_RUN_CPU = $(ZTT_CPU_INT)
 run-ztt-system-move: ZTT_RUN_CPU = $(ZTT_CPU_MOVE)
 run-ztt-system-na16: ZTT_RUN_CPU = $(ZTT_CPU_NA16)
+run-ztt-system-debug: ZTT_RUN_CPU = $(ZTT_CPU_DEBUG)
+run-ztt-system-debug-narrow: ZTT_RUN_CPU = $(ZTT_CPU_DEBUG_NARROW)
 run-ztt-system-decode: ZTT_RUN_CPU = $(ZTT_CPU_DECODE)
 run-ztt-system-matrix-int128: ZTT_RUN_CPU = $(ZTT_CPU_INT128)
 run-ztt-system-fp-int: ZTT_RUN_CPU = $(ZTT_CPU_INT128)
@@ -164,3 +181,80 @@ run-ztt-system-wait-icount: ztt-system-wait
 	  -accel tcg$(COMMA)thread=single \
 	  -icount shift=0$(COMMA)align=off$(COMMA)sleep=off \
 	  -cpu $(ZTT_CPU_SMALL))
+
+GDB_SCRIPT = $(SRC_PATH)/tests/guest-debug/run-test.py
+ZTT_GDB_TEST = $(SRC_PATH)/tests/tcg/riscv/gdbstub/test-ame.py
+EXTRA_RUNS += run-ztt-gdb-small run-ztt-gdb-max run-ztt-gdb-memory
+EXTRA_RUNS += run-ztt-gdb-big-endian
+
+ifneq ($(GDB),)
+EXTRA_TESTS += ztt-gdb
+ztt-gdb.o: $(ZTT_TEST_SRC)/ztt-gdb.S
+	$(CC) $(ZTT_SYSTEM_CFLAGS) $< -Wa,--noexecstack -c -o $@
+ztt-gdb: ztt-gdb.o $(ZTT_LINK_SCRIPT)
+	$(CC) $(ZTT_SYSTEM_CFLAGS) -nostdlib -static \
+		-Wl,--build-id=none -Wl,-T,$(ZTT_LINK_SCRIPT) $< -o $@
+
+run-ztt-gdb-small: ztt-gdb
+	$(call run-test, $@, \
+	  $(GDB_SCRIPT) --gdb $(GDB) --qemu $(QEMU) \
+	  --qargs "-M virt$(COMMA)x-ame-backends=1 -smp 2 -display none \
+	  -accel tcg$(COMMA)thread=multi -cpu $(ZTT_CPU_FP) -bios none -kernel" \
+	  --bin $< --test $(ZTT_GDB_TEST), \
+	  Ztt small-configuration GDB registers)
+
+run-ztt-gdb-max: ztt-gdb
+	$(call run-test, $@, \
+	  $(GDB_SCRIPT) --gdb $(GDB) --qemu $(QEMU) \
+	  --qargs "-M virt$(COMMA)x-ame-backends=1 -smp 2 -display none \
+	  -accel tcg$(COMMA)thread=multi -cpu $(ZTT_CPU_MAX) -bios none -kernel" \
+	  --bin $< --test $(ZTT_GDB_TEST), \
+	  Ztt maximum-configuration GDB registers)
+
+run-ztt-gdb-memory: ztt-system-memory-tcg
+	$(call run-test, $@, \
+	  $(GDB_SCRIPT) --gdb $(GDB) --qemu $(QEMU) \
+	  --qargs "-M virt -display none -cpu $(ZTT_CPU_SMALL) -bios none -kernel" \
+	  --bin $< --test $(SRC_PATH)/tests/tcg/riscv/gdbstub/test-ame-memory.py, \
+	  Ztt memory watchpoints)
+
+run-ztt-gdb-big-endian: ztt-gdb
+	$(call run-test, $@, \
+	  $(GDB_SCRIPT) --gdb $(GDB) --qemu $(QEMU) \
+	  --qargs "-M virt -display none -cpu $(ZTT_CPU_SMALL)$(COMMA)big-endian=true \
+	  -bios none -kernel" \
+	  --bin $< --test $(SRC_PATH)/tests/tcg/riscv/gdbstub/test-ame-endian.py, \
+	  Ztt GDB registers on a big-endian hart)
+else
+run-ztt-gdb-small run-ztt-gdb-max run-ztt-gdb-memory run-ztt-gdb-big-endian:
+	$(call skip-test, $@, "need working RISC-V GDB")
+endif
+
+ifeq ($(CONFIG_PLUGIN),y)
+EXTRA_RUNS_WITH_PLUGIN += run-plugin-ztt-system-memory-tcg-with-libmem.so
+EXTRA_RUNS_WITH_PLUGIN += run-plugin-ztt-system-memory-exception-with-libmem.so
+run-plugin-ztt-system-memory-exception-with-libmem.so: ztt-system-memory-exception libmem.so
+	$(call run-test, $@, \
+	  $(QEMU) -M virt -bios none -display none -semihosting \
+	  -cpu $(ZTT_CPU_SMALL) -device loader$(COMMA)file=$< \
+	  -plugin $(PLUGIN_LIB)/libmem.so$(COMMA)callback=true)
+run-plugin-ztt-system-memory-tcg-with-libmem.so: ztt-system-memory-tcg libmem.so
+	$(call run-test, $@, \
+	  $(QEMU) -M virt -bios none -display none -semihosting \
+	  -cpu $(ZTT_CPU_SMALL) -device loader$(COMMA)file=$< \
+	  -plugin $(PLUGIN_LIB)/libmem.so$(COMMA)print-accesses=true \
+	  -d plugin -D $@.pout)
+	$(call quiet-command, $(PYTHON) $(ZTT_TEST_SRC)/check-memory-plugin.py \
+	  --nm "$(shell $(CC) -print-prog-name=nm)" --binary $< $@.pout, \
+	  TEST, Ztt plugin byte accesses)
+ifneq ($(GDB),)
+EXTRA_RUNS += run-ztt-gdb-memory-plugin
+run-ztt-gdb-memory-plugin: ztt-system-memory-tcg libmem.so
+	$(call run-test, $@, \
+	  $(GDB_SCRIPT) --gdb $(GDB) --qemu $(QEMU) \
+	  --qargs "-M virt -display none -cpu $(ZTT_CPU_SMALL) -bios none \
+	  -plugin $(PLUGIN_LIB)/libmem.so$(COMMA)callback=true -kernel" \
+	  --bin $< --test $(SRC_PATH)/tests/tcg/riscv/gdbstub/test-ame-memory.py, \
+	  Ztt memory watchpoints with plugin callbacks)
+endif
+endif
