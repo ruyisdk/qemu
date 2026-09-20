@@ -54,6 +54,16 @@ tests = {
     '../../target/riscv/ame/tuple-set.c',
     '../../target/riscv/ame/cap-set.c',
   ],
+  'test-riscv-ame-exec': [
+    '../../target/riscv/ame/datatype.c',
+    '../../target/riscv/ame/cap-set.c',
+    '../../target/riscv/ame/tuple-set.c',
+    '../../target/riscv/ame/exec.c',
+    '../../target/riscv/ame/fp.c',
+    '../../target/riscv/ame/int.c',
+    '../../target/riscv/ame/layout.c',
+    '../../fpu/softfloat.c',
+  ],
   'test-riscv-ame-fp': [
     '../../target/riscv/ame/datatype.c',
     '../../target/riscv/ame/fp.c',
