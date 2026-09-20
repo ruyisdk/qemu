@@ -417,6 +417,10 @@ bool riscv_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
         CPURISCVState *env = &cpu->env;
         int interruptno = riscv_cpu_local_irq_pending(env);
         if (interruptno >= 0) {
+            if (cpu->cfg.ext_ztt &&
+                riscv_ame_wait_interrupt(&cpu->ame, OBJECT(cpu))) {
+                return false;
+            }
             cs->exception_index = RISCV_EXCP_INT_FLAG | interruptno;
             riscv_cpu_do_interrupt(cs);
             return true;
@@ -459,6 +463,9 @@ void riscv_cpu_swap_hypervisor_regs(CPURISCVState *env)
 
     if (riscv_has_ext(env, RVF)) {
         mstatus_mask |= MSTATUS_FS;
+    }
+    if (riscv_cpu_cfg(env)->ext_ztt) {
+        mstatus_mask |= MSTATUS_AME_MS;
     }
     bool current_virt = env->virt_enabled;
 
@@ -1770,6 +1777,12 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
         return false;
     } else {
         int wp_access = 0;
+        target_ulong fault_address = address;
+
+        if (cpu->ame.memory.fault_active) {
+            fault_address = cpu->ame.memory.fault_address;
+            cpu->ame.memory.fault_active = false;
+        }
 
         if (access_type == MMU_DATA_LOAD) {
             wp_access |= BP_MEM_READ;
@@ -1786,7 +1799,8 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
         cpu_check_watchpoint(cs, address, size, MEMTXATTRS_UNSPECIFIED,
                              wp_access, retaddr);
 
-        raise_mmu_exception(env, address, access_type, pmp_pma_violation,
+        raise_mmu_exception(env, fault_address, access_type,
+                            pmp_pma_violation,
                             first_stage_error, two_stage_lookup,
                             two_stage_indirect_error);
         cpu_loop_exit_restore(cs, retaddr);

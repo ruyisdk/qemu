@@ -63,6 +63,15 @@
 #define CSR_VTYPE           0xc21
 #define CSR_VLENB           0xc22
 
+/* Ztt v0.6 provisional user custom CSRs */
+#define CSR_AMESTATUS         0x800
+#define CSR_AMESTYPE          0x810
+#define CSR_AMEFFLAGS         0x811
+#define CSR_AMEXSAT           0x812
+#define CSR_AMENLEN           0xcc0
+#define CSR_AMEUDSZ           0xcc1
+#define CSR_AMEOWN            0xcc3
+
 /* VCSR fields */
 #define VCSR_VXSAT_SHIFT    0
 #define VCSR_VXSAT          (0x1 << VCSR_VXSAT_SHIFT)
@@ -628,6 +637,7 @@
 #define MSTATUS_TSR         0x00400000 /* since: priv-1.10 */
 #define MSTATUS_SPELP       0x00800000 /* zicfilp */
 #define MSTATUS_SDT         0x01000000
+#define MSTATUS_AME_MS      0x06000000
 #define MSTATUS_MPELP       0x020000000000 /* zicfilp */
 #define MSTATUS_SBE         0x1000000000ULL
 #define MSTATUS_MBE         0x2000000000ULL
@@ -664,6 +674,7 @@ typedef enum {
 #define SSTATUS_MXR         0x00080000
 #define SSTATUS_SPELP       MSTATUS_SPELP   /* zicfilp */
 #define SSTATUS_SDT         MSTATUS_SDT
+#define SSTATUS_AME_MS      MSTATUS_AME_MS
 
 #define SSTATUS64_UXL       0x0000000300000000ULL
 

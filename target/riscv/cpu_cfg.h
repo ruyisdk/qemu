@@ -21,6 +21,8 @@
 #ifndef RISCV_CPU_CFG_H
 #define RISCV_CPU_CFG_H
 
+#include "target/riscv/ame/cap-set.h"
+
 struct RISCVCPUConfig {
 #define BOOL_FIELD(x) bool x;
 #define TYPED_FIELD(type, x, default) type x;
@@ -69,6 +71,7 @@ MATERIALISE_EXT_PREDICATE(xtheadmemidx)
 MATERIALISE_EXT_PREDICATE(xtheadmempair)
 MATERIALISE_EXT_PREDICATE(xtheadsync)
 MATERIALISE_EXT_PREDICATE(XVentanaCondOps)
+MATERIALISE_EXT_PREDICATE(ztt)
 MATERIALISE_EXT_PREDICATE(xlrbr);
 
 #endif

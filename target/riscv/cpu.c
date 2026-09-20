@@ -94,6 +94,41 @@ bool riscv_cpu_option_set(RISCVCPU *cpu, const char *optname)
     return g_hash_table_contains(cpu->user_options, optname);
 }
 
+bool riscv_cpu_ame_enabled(CPURISCVState *env)
+{
+    if (!riscv_cpu_cfg(env)->ext_ztt) {
+        return false;
+    }
+
+#ifdef CONFIG_USER_ONLY
+    return true;
+#else
+    if (!(env->mstatus & MSTATUS_AME_MS)) {
+        return false;
+    }
+    if (env->virt_enabled && !(env->mstatus_hs & MSTATUS_AME_MS)) {
+        return false;
+    }
+    return true;
+#endif
+}
+
+void riscv_ame_set_ms(CPURISCVState *env, unsigned status)
+{
+#ifndef CONFIG_USER_ONLY
+    env->mstatus = set_field(env->mstatus, MSTATUS_AME_MS, status);
+    if (env->virt_enabled) {
+        env->mstatus_hs = set_field(env->mstatus_hs,
+                                    MSTATUS_AME_MS, status);
+    }
+#endif
+}
+
+void riscv_ame_mark_dirty(CPURISCVState *env)
+{
+    riscv_ame_set_ms(env, EXT_STATUS_DIRTY);
+}
+
 #ifndef CONFIG_USER_ONLY
 /* This is used in runtime only. */
 void cpu_set_exception_base(int vp_index, uint64_t address)
@@ -953,11 +988,13 @@ bool riscv_cpu_has_work(CPUState *cs)
 {
     RISCVCPU *cpu = RISCV_CPU(cs);
     CPURISCVState *env = &cpu->env;
+
     /*
      * Definition of the WFI instruction requires it to ignore the privilege
      * mode and delegation registers, but respect individual enables
      */
-    return riscv_cpu_all_pending(env) != 0 ||
+    return (cpu->cfg.ext_ztt && riscv_ame_wait_has_wake(&cpu->ame)) ||
+        riscv_cpu_all_pending(env) != 0 ||
         riscv_cpu_sirq_pending(env) != RISCV_EXCP_NONE ||
         riscv_cpu_vsirq_pending(env) != RISCV_EXCP_NONE;
 }
@@ -1077,6 +1114,17 @@ static void riscv_cpu_reset_hold(Object *obj, ResetType type)
     set_float_default_nan_pattern(0b01000000, &env->fp_status);
     env->vill = true;
 
+    if (cpu->cfg.ext_ztt) {
+        riscv_ame_state_reset(&cpu->ame);
+        env->amefflags = 0;
+        env->amexsat = false;
+#ifndef CONFIG_USER_ONLY
+        env->mstatus &= ~MSTATUS_AME_MS;
+        env->mstatus_hs &= ~MSTATUS_AME_MS;
+        env->vsstatus &= ~MSTATUS_AME_MS;
+#endif
+    }
+
 #ifndef CONFIG_USER_ONLY
 #ifdef CONFIG_TCG
     if (cpu->cfg.debug) {
@@ -1191,9 +1239,53 @@ static void riscv_cpu_satp_mode_finalize(RISCVCPU *cpu, Error **errp)
 }
 #endif
 
+static bool riscv_cpu_ame_finalize(RISCVCPU *cpu, Error **errp)
+{
+    const AmeCapabilities *capabilities;
+    RISCVAMELayout layout;
+
+    if (!cpu->cfg.ext_ztt) {
+        return true;
+    }
+    if (riscv_cpu_mxl(&cpu->env) == MXL_RV128) {
+        error_setg(errp, "Ztt is not supported with RV128");
+        return false;
+    }
+#if defined(CONFIG_TCG) && !defined(CONFIG_USER_ONLY)
+    if (RISCV_CPU_GET_CLASS(cpu)->def->custom_csrs == th_csr_list) {
+        error_setg(errp, "Ztt is incompatible with T-Head custom CSRs");
+        return false;
+    }
+#endif
+    if (kvm_enabled()) {
+        error_setg(errp, "Ztt is not available with KVM acceleration");
+        return false;
+    }
+    if (!tcg_enabled()) {
+        error_setg(errp, "Ztt is only available with TCG acceleration");
+        return false;
+    }
+
+    capabilities = riscv_ame_capabilities_for_cpu(
+        cpu->cfg.ame_cap_policy, cpu->cfg.ame_capabilities, errp);
+    if (capabilities == NULL ||
+        !riscv_ame_compute_layout(cpu->cfg.ame_nlen, cpu->cfg.ame_udsz,
+                                  cpu->cfg.ame_num_mregs,
+                                  cpu->cfg.ame_num_accregs,
+                                  capabilities, &layout, errp)) {
+        return false;
+    }
+
+    return true;
+}
+
 void riscv_cpu_finalize_features(RISCVCPU *cpu, Error **errp)
 {
     Error *local_err = NULL;
+
+    if (!riscv_cpu_ame_finalize(cpu, errp)) {
+        return;
+    }
 
 #ifndef CONFIG_USER_ONLY
     riscv_cpu_satp_mode_finalize(cpu, &local_err);
@@ -1219,6 +1311,56 @@ void riscv_cpu_finalize_features(RISCVCPU *cpu, Error **errp)
     }
 }
 
+#ifndef CONFIG_USER_ONLY
+static void riscv_cpu_ame_wait_kick(Object *hart)
+{
+    qemu_cpu_kick(CPU(hart));
+}
+
+static bool riscv_cpu_ame_state_init_system(RISCVCPU *cpu, Error **errp)
+{
+    RISCVAMEBackendPool *pool = cpu->ame_pool;
+    DeviceState *pool_dev = NULL;
+    bool initialized;
+
+    if (pool == NULL) {
+        pool_dev = qdev_new(TYPE_RISCV_AME_BACKEND_POOL);
+        pool = RISCV_AME_BACKEND_POOL(pool_dev);
+        cpu->private_ame_pool = pool;
+        object_property_add_child(OBJECT(cpu), "ame-private-pool",
+                                  OBJECT(pool_dev));
+    }
+
+    initialized = riscv_ame_backend_pool_configure_cpu(
+        pool, cpu->cfg.ame_nlen, cpu->cfg.ame_udsz,
+        cpu->cfg.ame_num_mregs, cpu->cfg.ame_num_accregs,
+        cpu->cfg.ame_cap_policy, cpu->cfg.ame_capabilities, errp);
+    if (initialized && pool_dev != NULL) {
+        initialized = qdev_realize_and_unref(pool_dev, NULL, errp);
+        pool_dev = NULL;
+    }
+    if (initialized) {
+        initialized = riscv_ame_state_attach(
+            &cpu->ame, riscv_ame_backend_pool_core(pool), errp);
+    }
+    if (!initialized && cpu->private_ame_pool != NULL) {
+        if (DEVICE(cpu->private_ame_pool)->realized) {
+            qdev_unrealize(DEVICE(cpu->private_ame_pool));
+        }
+        object_unparent(OBJECT(cpu->private_ame_pool));
+        if (pool_dev != NULL) {
+            object_unref(pool_dev);
+        }
+        cpu->private_ame_pool = NULL;
+    }
+    if (initialized) {
+        riscv_ame_state_set_wait_kick(&cpu->ame,
+                                      riscv_cpu_ame_wait_kick);
+    }
+    return initialized;
+}
+#endif
+
 static void riscv_cpu_realize(DeviceState *dev, Error **errp)
 {
     CPUState *cs = CPU(dev);
@@ -1238,6 +1380,24 @@ static void riscv_cpu_realize(DeviceState *dev, Error **errp)
         return;
     }
 
+    if (cpu->cfg.ext_ztt) {
+        bool initialized;
+
+#ifdef CONFIG_USER_ONLY
+        initialized = riscv_ame_state_init(
+            &cpu->ame, cpu->cfg.ame_nlen, cpu->cfg.ame_udsz,
+            cpu->cfg.ame_num_mregs, cpu->cfg.ame_num_accregs,
+            cpu->cfg.ame_cap_policy, cpu->cfg.ame_capabilities,
+            &local_err);
+#else
+        initialized = riscv_cpu_ame_state_init_system(cpu, &local_err);
+#endif
+        if (!initialized) {
+            error_propagate(errp, local_err);
+            return;
+        }
+    }
+
     riscv_cpu_register_gdb_regs_for_features(cs);
 
 #if defined(CONFIG_TCG) && !defined(CONFIG_USER_ONLY)
@@ -1254,10 +1414,20 @@ static void riscv_cpu_realize(DeviceState *dev, Error **errp)
 
 static void riscv_cpu_unrealize(DeviceState *dev)
 {
-    RISCVCPUClass *mcc = RISCV_CPU_GET_CLASS(dev);
-#if defined(CONFIG_TCG) && !defined(CONFIG_USER_ONLY)
     RISCVCPU *cpu = RISCV_CPU(dev);
+    RISCVCPUClass *mcc = RISCV_CPU_GET_CLASS(dev);
 
+    if (cpu->cfg.ext_ztt) {
+        riscv_ame_state_destroy(&cpu->ame);
+#ifndef CONFIG_USER_ONLY
+        if (cpu->private_ame_pool != NULL) {
+            qdev_unrealize(DEVICE(cpu->private_ame_pool));
+            object_unparent(OBJECT(cpu->private_ame_pool));
+            cpu->private_ame_pool = NULL;
+        }
+#endif
+    }
+#if defined(CONFIG_TCG) && !defined(CONFIG_USER_ONLY)
     if (cpu->cfg.debug) {
         riscv_trigger_unrealize(&cpu->env);
     }
@@ -1434,6 +1604,10 @@ static void riscv_cpu_init(Object *obj)
     cpu->cfg.pmu_mask = MAKE_64BIT_MASK(3, 16);
     cpu->cfg.vlenb = 128 >> 3;
     cpu->cfg.elen = 64;
+    cpu->cfg.ame_nlen = RV_AME_N_MAX;
+    cpu->cfg.ame_udsz = RV_AME_UDSZ_MAX;
+    cpu->cfg.ame_num_mregs = RV_AME_M_REGS_MAX;
+    cpu->cfg.ame_num_accregs = RV_AME_ACC_REGS_MAX;
     cpu->cfg.cbom_blocksize = 64;
     cpu->cfg.cbop_blocksize = 64;
     cpu->cfg.cboz_blocksize = 64;
@@ -2853,6 +3027,14 @@ static const Property riscv_cpu_properties[] = {
     {.name = "vlen", .info = &prop_vlen},
     {.name = "elen", .info = &prop_elen},
 
+    DEFINE_PROP_UINT64("amenlen", RISCVCPU, cfg.ame_nlen, RV_AME_N_MAX),
+    DEFINE_PROP_UINT64("ameudsz", RISCVCPU, cfg.ame_udsz,
+                       RV_AME_UDSZ_MAX),
+    DEFINE_PROP_UINT8("ame-num-mregs", RISCVCPU, cfg.ame_num_mregs,
+                      RV_AME_M_REGS_MAX),
+    DEFINE_PROP_UINT8("ame-num-accregs", RISCVCPU, cfg.ame_num_accregs,
+                      RV_AME_ACC_REGS_MAX),
+
     {.name = "cbom_blocksize", .info = &prop_cbom_blksize},
     {.name = "cbop_blocksize", .info = &prop_cbop_blksize},
     {.name = "cboz_blocksize", .info = &prop_cboz_blksize},
@@ -2863,6 +3045,8 @@ static const Property riscv_cpu_properties[] = {
 
 #ifndef CONFIG_USER_ONLY
     DEFINE_PROP_UINT64("resetvec", RISCVCPU, env.resetvec, DEFAULT_RSTVEC),
+    DEFINE_PROP_LINK("ame-backend-pool", RISCVCPU, ame_pool,
+                     TYPE_RISCV_AME_BACKEND_POOL, RISCVAMEBackendPool *),
     DEFINE_PROP_UINT64("rnmi-interrupt-vector", RISCVCPU, env.rnmi_irqvec,
                        DEFAULT_RNMI_IRQVEC),
     DEFINE_PROP_UINT64("rnmi-exception-vector", RISCVCPU, env.rnmi_excpvec,
@@ -3176,6 +3360,7 @@ static void riscv_cpu_instance_finalize(Object *obj)
     g_clear_pointer(&cpu->pmu_timer, timer_free);
     g_clear_pointer(&cpu->pmu_event_ctr_map, g_hash_table_destroy);
 #endif
+    riscv_ame_state_destroy(&cpu->ame);
     g_clear_pointer(&cpu->user_options, g_hash_table_destroy);
 }
 
@@ -3196,6 +3381,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
     DEFINE_ABSTRACT_RISCV_CPU(TYPE_RISCV_DYNAMIC_CPU, TYPE_RISCV_CPU,
         .cfg.mmu = true,
         .cfg.pmp = true,
+        .cfg.ame_cap_policy = AME_CAP_POLICY_FOLLOW_MAX,
         .priv_spec = PRIV_VERSION_LATEST,
     ),
 

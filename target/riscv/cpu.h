@@ -32,6 +32,10 @@
 #include "qemu/int128.h"
 #include "cpu_bits.h"
 #include "cpu_cfg.h"
+#include "ame/backend.h"
+#ifndef CONFIG_USER_ONLY
+#include "ame/pool.h"
+#endif
 #include "qapi/qapi-types-common.h"
 #include "cpu-qom.h"
 
@@ -273,6 +277,10 @@ struct CPUArchState {
 
     uint64_t badaddr;
     uint64_t bins;
+
+    /* Accrued AME flags belong to the hart, not the shared backend. */
+    uint8_t amefflags;
+    bool amexsat;
 
     uint64_t guest_phys_fault_addr;
 
@@ -579,6 +587,13 @@ struct ArchCPU {
     GHashTable *pmu_event_ctr_map;
     GHashTable *user_options;
     const GPtrArray *decoders;
+
+    /* Per-hart AME resources; not part of the architectural state copy. */
+    RISCVAMEState ame;
+#ifndef CONFIG_USER_ONLY
+    RISCVAMEBackendPool *private_ame_pool;
+    RISCVAMEBackendPool *ame_pool;
+#endif
 };
 
 typedef struct RISCVCSR RISCVCSR;
@@ -647,6 +662,9 @@ int riscv_cpu_pending_to_irq(CPURISCVState *env,
 
 bool riscv_cpu_fp_enabled(CPURISCVState *env);
 bool riscv_cpu_vector_enabled(CPURISCVState *env);
+bool riscv_cpu_ame_enabled(CPURISCVState *env);
+void riscv_ame_set_ms(CPURISCVState *env, unsigned status);
+void riscv_ame_mark_dirty(CPURISCVState *env);
 void riscv_cpu_set_virt_enabled(CPURISCVState *env, bool enable);
 int riscv_env_mmu_index(CPURISCVState *env, bool ifetch);
 bool cpu_get_fcfien(CPURISCVState *env);

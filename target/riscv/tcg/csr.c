@@ -1923,7 +1923,8 @@ static uint64_t add_status_sd(RISCVMXL xl, uint64_t status)
 {
     if ((status & MSTATUS_FS) == MSTATUS_FS ||
         (status & MSTATUS_VS) == MSTATUS_VS ||
-        (status & MSTATUS_XS) == MSTATUS_XS) {
+        (status & MSTATUS_XS) == MSTATUS_XS ||
+        (status & MSTATUS_AME_MS) == MSTATUS_AME_MS) {
         switch (xl) {
         case MXL_RV32:
             return status | MSTATUS32_SD;
@@ -2025,6 +2026,7 @@ static uint64_t riscv_write_uxl(CPURISCVState *env, uint64_t val,
 static RISCVException write_mstatus(CPURISCVState *env, int csrno,
                                     target_ulong val, uintptr_t ra)
 {
+    RISCVCPU *cpu = env_archcpu(env);
     uint64_t mstatus = env->mstatus;
     uint64_t mask = 0;
     RISCVMXL xl = riscv_cpu_mxl(env);
@@ -2034,6 +2036,12 @@ static RISCVException write_mstatus(CPURISCVState *env, int csrno,
      * legalization for it will not break any software running on 1.10.
      */
     val = legalize_mpp(env, get_field(mstatus, MSTATUS_MPP), val);
+
+    if (cpu->cfg.ext_ztt &&
+        riscv_ame_state_owned(&cpu->ame, OBJECT(cpu)) &&
+        !(val & MSTATUS_AME_MS)) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
 
     /* flush tlb on mstatus fields that affect VM */
     if ((val ^ mstatus) & MSTATUS_MXR) {
@@ -2050,6 +2058,10 @@ static RISCVException write_mstatus(CPURISCVState *env, int csrno,
 
     if (riscv_cpu_cfg(env)->ext_zve32x) {
         mask |= MSTATUS_VS;
+    }
+
+    if (riscv_cpu_cfg(env)->ext_ztt) {
+        mask |= MSTATUS_AME_MS;
     }
 
     if (riscv_env_smode_dbltrp_enabled(env, env->virt_enabled)) {
@@ -3984,7 +3996,11 @@ static RISCVException read_sstatus_i128(CPURISCVState *env, int csrno,
                                         Int128 *val)
 {
     uint64_t mask = sstatus_v1_10_mask;
-    uint64_t sstatus = env->mstatus & mask;
+    uint64_t sstatus;
+
+    if (riscv_cpu_cfg(env)->ext_ztt) {
+        mask |= SSTATUS_AME_MS;
+    }
     if (env->xl != MXL_RV32 || env->debugger) {
         mask |= SSTATUS64_UXL;
     }
@@ -3996,6 +4012,7 @@ static RISCVException read_sstatus_i128(CPURISCVState *env, int csrno,
         mask |= SSTATUS_SPELP;
     }
 
+    sstatus = env->mstatus & mask;
     *val = int128_make128(sstatus, add_status_sd(MXL_RV128, sstatus));
     return RISCV_EXCP_NONE;
 }
@@ -4004,6 +4021,10 @@ static RISCVException read_sstatus(CPURISCVState *env, int csrno,
                                    target_ulong *val)
 {
     target_ulong mask = (sstatus_v1_10_mask);
+
+    if (riscv_cpu_cfg(env)->ext_ztt) {
+        mask |= SSTATUS_AME_MS;
+    }
     if (env->xl != MXL_RV32 || env->debugger) {
         mask |= SSTATUS64_UXL;
     }
@@ -4023,6 +4044,10 @@ static RISCVException write_sstatus(CPURISCVState *env, int csrno,
                                     target_ulong val, uintptr_t ra)
 {
     target_ulong mask = (sstatus_v1_10_mask);
+
+    if (riscv_cpu_cfg(env)->ext_ztt) {
+        mask |= SSTATUS_AME_MS;
+    }
 
     if (env->xl != MXL_RV32 || env->debugger) {
         if ((val & SSTATUS64_UXL) != 0) {
@@ -5221,7 +5246,11 @@ static RISCVException write_hviprio2h(CPURISCVState *env, int csrno,
 static RISCVException read_vsstatus(CPURISCVState *env, int csrno,
                                     target_ulong *val)
 {
-    *val = env->vsstatus;
+    if (riscv_cpu_cfg(env)->ext_ztt) {
+        *val = add_status_sd(riscv_cpu_mxl(env), env->vsstatus);
+    } else {
+        *val = env->vsstatus;
+    }
     return RISCV_EXCP_NONE;
 }
 
@@ -5887,6 +5916,152 @@ static RISCVException write_jvt(CPURISCVState *env, int csrno,
     return RISCV_EXCP_NONE;
 }
 
+static RISCVException ame_state(CPURISCVState *env, int csrno)
+{
+    return riscv_cpu_ame_enabled(env) ?
+           RISCV_EXCP_NONE : RISCV_EXCP_ILLEGAL_INST;
+}
+
+static RISCVException ame_context(CPURISCVState *env, int csrno)
+{
+    RISCVCPU *cpu = env_archcpu(env);
+
+    if (ame_state(env, csrno) != RISCV_EXCP_NONE ||
+        !riscv_ame_state_owned(&cpu->ame, OBJECT(cpu))) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_amestatus(CPURISCVState *env, int csrno,
+                                     target_ulong *val)
+{
+    const RISCVAMEBackendSlot *slot = riscv_ame_state_backend_const(
+        &env_archcpu(env)->ame, OBJECT(env_archcpu(env)));
+
+    if (slot == NULL) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+    *val = slot->status & AME_STATUS_UN;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_amestatus(CPURISCVState *env, int csrno,
+                                      target_ulong val, uintptr_t ra)
+{
+    RISCVAMEBackendSlot *slot = riscv_ame_state_backend(
+        &env_archcpu(env)->ame, OBJECT(env_archcpu(env)));
+
+    if (slot == NULL) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+    if (!(val & AME_STATUS_UN)) {
+        slot->status &= ~AME_STATUS_UN;
+    }
+    riscv_ame_mark_dirty(env);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_amestype(CPURISCVState *env, int csrno,
+                                    target_ulong *val)
+{
+    const RISCVAMEBackendSlot *slot = riscv_ame_state_backend_const(
+        &env_archcpu(env)->ame, OBJECT(env_archcpu(env)));
+
+    if (slot == NULL) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+    *val = slot->scalar_dtype;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_amestype(CPURISCVState *env, int csrno,
+                                     target_ulong val, uintptr_t ra)
+{
+    RISCVCPU *cpu = env_archcpu(env);
+    const AmeDTypeDesc *desc;
+    RISCVAMEBackendSlot *slot = riscv_ame_state_backend(
+        &cpu->ame, OBJECT(cpu));
+
+    if (slot == NULL) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+    slot->scalar_dtype = (uint32_t)val;
+    desc = riscv_ame_dtype_by_encoding(slot->scalar_dtype);
+    slot->scalar_dtype_id =
+        desc != NULL && riscv_ame_dtype_set_has(
+                             &cpu->ame.pool->capabilities.dtypes, desc->id) ?
+        desc->id : AME_DTYPE_ID_INVALID;
+    riscv_ame_mark_dirty(env);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_amefflags(CPURISCVState *env, int csrno,
+                                     target_ulong *val)
+{
+    *val = env->amefflags & AME_FFLAGS_MASK;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_amefflags(CPURISCVState *env, int csrno,
+                                      target_ulong val, uintptr_t ra)
+{
+    env->amefflags = val & AME_FFLAGS_MASK;
+    riscv_ame_mark_dirty(env);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_amexsat(CPURISCVState *env, int csrno,
+                                   target_ulong *val)
+{
+    *val = env->amexsat;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException write_amexsat(CPURISCVState *env, int csrno,
+                                    target_ulong val, uintptr_t ra)
+{
+    env->amexsat = (val & AME_XSAT_SAT) != 0;
+    riscv_ame_mark_dirty(env);
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_amenlen(CPURISCVState *env, int csrno,
+                                   target_ulong *val)
+{
+    const RISCVAMELayout *layout =
+        riscv_ame_state_layout(&env_archcpu(env)->ame);
+
+    if (layout == NULL) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+    *val = layout->n;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_ameudsz(CPURISCVState *env, int csrno,
+                                   target_ulong *val)
+{
+    const RISCVAMELayout *layout =
+        riscv_ame_state_layout(&env_archcpu(env)->ame);
+
+    if (layout == NULL) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+    *val = layout->u;
+    return RISCV_EXCP_NONE;
+}
+
+static RISCVException read_ameown(CPURISCVState *env, int csrno,
+                                  target_ulong *val)
+{
+    RISCVCPU *cpu = env_archcpu(env);
+
+    *val = riscv_ame_state_owned(&cpu->ame, OBJECT(cpu));
+    return RISCV_EXCP_NONE;
+}
+
 bool riscv_csr_is_fpu(int csrno)
 {
     if (!csr_ops[csrno].predicate) {
@@ -5922,6 +6097,18 @@ riscv_csr_operations csr_ops[CSR_TABLE_SIZE] = {
     [CSR_VL]       = { "vl",       vs,     read_vl                    },
     [CSR_VTYPE]    = { "vtype",    vs,     read_vtype                 },
     [CSR_VLENB]    = { "vlenb",    vs,     read_vlenb                 },
+    /* Ztt v0.6 provisional user custom CSRs */
+    [CSR_AMESTATUS] = { "amestatus", ame_context,
+                        read_amestatus, write_amestatus },
+    [CSR_AMESTYPE] = { "amestype", ame_context,
+                       read_amestype, write_amestype },
+    [CSR_AMEFFLAGS] = { "amefflags", ame_context,
+                        read_amefflags, write_amefflags },
+    [CSR_AMEXSAT] = { "amexsat", ame_context,
+                      read_amexsat, write_amexsat },
+    [CSR_AMENLEN] = { "amenlen", ame_state, read_amenlen },
+    [CSR_AMEUDSZ] = { "ameudsz", ame_state, read_ameudsz },
+    [CSR_AMEOWN] = { "ameown", ame_state, read_ameown },
     /* User Timers and Counters */
     [CSR_CYCLE]    = { "cycle",    ctr,    read_hpmcounter  },
     [CSR_INSTRET]  = { "instret",  ctr,    read_hpmcounter  },
