@@ -575,6 +575,7 @@ struct ArchCPU {
 
     GDBFeature dyn_csr_feature;
     GDBFeature dyn_vreg_feature;
+    GDBFeature dyn_ame_feature;
 
     /* Configuration Settings */
     RISCVCPUConfig cfg;
@@ -665,6 +666,7 @@ bool riscv_cpu_vector_enabled(CPURISCVState *env);
 bool riscv_cpu_ame_enabled(CPURISCVState *env);
 void riscv_ame_set_ms(CPURISCVState *env, unsigned status);
 void riscv_ame_mark_dirty(CPURISCVState *env);
+void riscv_cpu_ame_cancel_wait_for_debug(CPUState *cs);
 void riscv_cpu_set_virt_enabled(CPURISCVState *env, bool enable);
 int riscv_env_mmu_index(CPURISCVState *env, bool ifetch);
 bool cpu_get_fcfien(CPURISCVState *env);

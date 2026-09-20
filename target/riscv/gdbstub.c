@@ -21,6 +21,7 @@
 #include "gdbstub/helpers.h"
 #include "cpu.h"
 #include "internals.h"
+#include "ame/gdbstub.h"
 #include "target/riscv/tcg/csr.h"
 
 struct TypeSize {
@@ -94,8 +95,10 @@ int riscv_cpu_gdb_write_register(CPUState *cs, uint8_t *mem_buf, int n)
     }
 
     if (n > 0 && n < 32) {
+        riscv_cpu_ame_cancel_wait_for_debug(cs);
         env->gpr[n] = tmp;
     } else if (n == 32) {
+        riscv_cpu_ame_cancel_wait_for_debug(cs);
         env->pc = tmp;
     }
 
@@ -194,6 +197,7 @@ static int riscv_gdb_set_csr(CPUState *cs, uint8_t *mem_buf, int n)
 
         result = riscv_csrrw_debug(env, n, NULL, val, -1);
         if (result == RISCV_EXCP_NONE) {
+            riscv_cpu_ame_cancel_wait_for_debug(cs);
             return regsz;
         }
     }
@@ -225,9 +229,13 @@ static int riscv_gdb_set_virtual(CPUState *cs, uint8_t *mem_buf, int n)
         const unsigned regsz = riscv_cpu_is_32bit(cpu) ? 4 : 8;
 #ifndef CONFIG_USER_ONLY
         CPURISCVState *env = &cpu->env;
-        privilege_mode_t new_priv = ldn(env, mem_buf, regsz) & 0x3;
+        privilege_mode_t new_priv;
         bool new_virt = 0;
+#endif
 
+        riscv_cpu_ame_cancel_wait_for_debug(cs);
+#ifndef CONFIG_USER_ONLY
+        new_priv = ldn(env, mem_buf, regsz) & 0x3;
         if (new_priv == PRV_RESERVED) {
             new_priv = PRV_S;
         }
@@ -272,6 +280,9 @@ static GDBFeature *riscv_gen_dynamic_csr_feature(CPUState *cs, int base_reg)
                              base_reg);
 
     for (i = 0; i < CSR_TABLE_SIZE; i++) {
+        if (cpu->cfg.ext_ztt && riscv_ame_gdb_is_csr(i)) {
+            continue;
+        }
         if (env->priv_ver < csr_ops[i].min_priv_ver) {
             continue;
         }
@@ -355,6 +366,10 @@ void riscv_cpu_register_gdb_regs_for_features(CPUState *cs)
 
 #ifdef CONFIG_TCG
     RISCVCPUClass *mcc = RISCV_CPU_GET_CLASS(cs);
+
+    if (cpu->cfg.ext_ztt) {
+        riscv_ame_register_gdb_regs(cs);
+    }
 
     switch (mcc->def->misa_mxl_max) {
     case MXL_RV32:

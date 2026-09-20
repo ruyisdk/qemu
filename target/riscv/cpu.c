@@ -25,6 +25,9 @@
 #include "cpu.h"
 #include "cpu_vendorid.h"
 #include "target/riscv/tcg/csr.h"
+#ifdef CONFIG_TCG
+#include "target/riscv/ame/gdbstub.h"
+#endif
 #include "internals.h"
 #include "qapi/error.h"
 #include "qapi/visitor.h"
@@ -777,10 +780,21 @@ static void riscv_cpu_set_pc(CPUState *cs, vaddr value)
     RISCVCPU *cpu = RISCV_CPU(cs);
     CPURISCVState *env = &cpu->env;
 
+    riscv_cpu_ame_cancel_wait_for_debug(cs);
     if (env->xl == MXL_RV32) {
         env->pc = (int32_t)value;
     } else {
         env->pc = value;
+    }
+}
+
+void riscv_cpu_ame_cancel_wait_for_debug(CPUState *cs)
+{
+    RISCVCPU *cpu = RISCV_CPU(cs);
+
+    if (cpu->cfg.ext_ztt && cpu->ame.wait_active) {
+        riscv_ame_wait_cancel(&cpu->ame);
+        cs->halted = 0;
     }
 }
 
@@ -3356,6 +3370,9 @@ static void riscv_cpu_instance_finalize(Object *obj)
 {
     RISCVCPU *cpu = RISCV_CPU(obj);
 
+#ifdef CONFIG_TCG
+    riscv_ame_gdb_finalize(CPU(cpu));
+#endif
 #ifndef CONFIG_USER_ONLY
     g_clear_pointer(&cpu->pmu_timer, timer_free);
     g_clear_pointer(&cpu->pmu_event_ctr_map, g_hash_table_destroy);

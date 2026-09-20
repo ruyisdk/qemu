@@ -9,6 +9,7 @@ riscv_ss.add(files(
 riscv_ss.add(when: 'CONFIG_TCG', if_true: files(
   'exec.c',
   'fp.c',
+  'gdbstub.c',
   'int.c',
 ))
 
