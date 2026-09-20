@@ -289,10 +289,14 @@ qtests_s390x = \
    'cpu-plug-test',
    'migration-test']
 
-qtests_riscv32 = \
+qtests_riscv_ztt = ['riscv-ztt-test'] + \
+  (config_all_accel.has_key('CONFIG_TCG') ?
+   ['riscv-ame-pool-test', 'riscv-ztt-migration-test'] : [])
+
+qtests_riscv32 = qtests_riscv_ztt + \
   (config_all_devices.has_key('CONFIG_SIFIVE_E_AON') ? ['sifive-e-aon-watchdog-test'] : [])
 
-qtests_riscv64 = ['riscv-csr-test'] + \
+qtests_riscv64 = qtests_riscv_ztt + ['riscv-csr-test'] + \
   (unpack_edk2_blobs ? ['bios-tables-test'] : []) + \
   (config_all_devices.has_key('CONFIG_IOMMU_TESTDEV') and
    config_all_devices.has_key('CONFIG_RISCV_IOMMU') ?
