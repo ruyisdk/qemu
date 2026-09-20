@@ -42,10 +42,17 @@ tests = {
   'test-bitcnt': [],
   'test-riscv-ame-datatype': [
     '../../target/riscv/ame/datatype.c',
+    '../../target/riscv/ame/tuple-set.c',
+    '../../target/riscv/ame/cap-set.c',
   ],
   'test-riscv-ame-tuple-set': [
     '../../target/riscv/ame/datatype.c',
     '../../target/riscv/ame/tuple-set.c',
+  ],
+  'test-riscv-ame-cap-set': [
+    '../../target/riscv/ame/datatype.c',
+    '../../target/riscv/ame/tuple-set.c',
+    '../../target/riscv/ame/cap-set.c',
   ],
   'test-qgraph': ['../qtest/libqos/qgraph.c'],
   'check-qom-interface': [qom],

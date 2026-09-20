@@ -1,4 +1,5 @@
 riscv_ss.add(files(
+  'cap-set.c',
   'datatype.c',
   'tuple-set.c',
 ))
