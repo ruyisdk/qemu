@@ -92,6 +92,18 @@ tests = {
   'test-envlist': [],
 }
 
+if have_block or have_ga
+  tests += {
+    'test-riscv-ame-backend': [
+      '../../target/riscv/ame/backend.c',
+      '../../target/riscv/ame/datatype.c',
+      '../../target/riscv/ame/cap-set.c',
+      '../../target/riscv/ame/tuple-set.c',
+      '../../target/riscv/ame/layout.c',
+    ],
+  }
+endif
+
 if have_system or have_tools
   tests += {
     'test-qmp-event': [testqapi],

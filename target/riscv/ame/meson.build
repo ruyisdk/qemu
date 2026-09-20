@@ -1,4 +1,5 @@
 riscv_ss.add(files(
+  'backend.c',
   'cap-set.c',
   'datatype.c',
   'layout.c',
