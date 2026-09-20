@@ -12,19 +12,38 @@ ZTT_MARCH := rv$(ZTT_XLEN)imac_zicsr
 ZTT_SYSTEM_TESTS := \
 	ztt-system-backend-disabled \
 	ztt-system-control \
+	ztt-system-convert \
 	ztt-system-csr \
 	ztt-system-decode \
 	ztt-system-disabled \
+	ztt-system-elementwise \
+	ztt-system-fp-int \
+	ztt-system-helper-globals \
+	ztt-system-ieee \
+	ztt-system-ieee-nof \
+	ztt-system-integer-fused \
+	ztt-system-matrix-int128 \
+	ztt-system-mixed-numeric \
+	ztt-system-matrix \
+	ztt-system-move-na1 \
 	ztt-system-na16 \
+	ztt-system-move \
+	ztt-system-nonlinear \
+	ztt-system-ocp \
 	ztt-system-priv \
+	ztt-system-reduce-int128 \
+	ztt-system-reduce-scatter \
+	ztt-system-scatter-widen \
 	ztt-system-shared \
 	ztt-system-stress \
 	ztt-system-stress-full \
+	ztt-system-structural \
 	ztt-system-wait \
-	ztt-system-waiters
+	ztt-system-waiters \
+	ztt-system-zip
 
 ZTT_SYSTEM_DIRECT_TESTS := $(filter-out \
-	ztt-system-stress-full,$(ZTT_SYSTEM_TESTS))
+	ztt-system-ieee-nof ztt-system-stress-full,$(ZTT_SYSTEM_TESTS))
 
 TESTS += $(ZTT_SYSTEM_TESTS)
 
@@ -36,8 +55,18 @@ $(addsuffix .o,$(ZTT_SYSTEM_DIRECT_TESTS)): %.o: $(ZTT_TEST_SRC)/%.S
 	$(CC) $(ZTT_SYSTEM_CFLAGS) $(ZTT_TEST_CFLAGS) $< \
 		-Wa,--noexecstack -c -o $@
 ztt-system-priv.o: ZTT_TEST_MARCH = rv$(ZTT_XLEN)imach_zicsr
+ztt-system-helper-globals.o: ZTT_TEST_MARCH = rv$(ZTT_XLEN)imafdc_zicsr
+ztt-system-ieee.o: ZTT_TEST_CFLAGS = -DZTT_TEST_WITH_F
+ztt-system-fp-int.o: $(ZTT_TEST_SRC)/include/ztt-fp-int.S
+ztt-system-mixed-numeric.o: $(ZTT_TEST_SRC)/include/ztt-mixed-numeric.S
 
 $(ZTT_SYSTEM_DIRECT_TESTS): %: %.o $(ZTT_LINK_SCRIPT)
+	$(CC) $(ZTT_SYSTEM_CFLAGS) -nostdlib -static \
+		-Wl,--build-id=none -Wl,-T,$(ZTT_LINK_SCRIPT) $< -o $@
+
+ztt-system-ieee-nof.o: $(ZTT_TEST_SRC)/ztt-system-ieee.S
+	$(CC) $(ZTT_SYSTEM_CFLAGS) $< -Wa,--noexecstack -c -o $@
+ztt-system-ieee-nof: ztt-system-ieee-nof.o $(ZTT_LINK_SCRIPT)
 	$(CC) $(ZTT_SYSTEM_CFLAGS) -nostdlib -static \
 		-Wl,--build-id=none -Wl,-T,$(ZTT_LINK_SCRIPT) $< -o $@
 
@@ -52,22 +81,51 @@ ZTT_CPU = rv$(ZTT_XLEN)$(COMMA)x-ztt=true
 ZTT_CPU_SMALL := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=8
 ZTT_CPU_SMALL := $(ZTT_CPU_SMALL)$(COMMA)ame-num-mregs=16
 ZTT_CPU_SMALL := $(ZTT_CPU_SMALL)$(COMMA)ame-num-accregs=1
+ZTT_CPU_INT := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=8
+ZTT_CPU_INT := $(ZTT_CPU_INT)$(COMMA)ame-num-mregs=32
+ZTT_CPU_INT := $(ZTT_CPU_INT)$(COMMA)ame-num-accregs=1
+ZTT_CPU_MOVE := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=8
+ZTT_CPU_MOVE := $(ZTT_CPU_MOVE)$(COMMA)ame-num-mregs=16
+ZTT_CPU_MOVE := $(ZTT_CPU_MOVE)$(COMMA)ame-num-accregs=4
 ZTT_CPU_NA16 := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=8
 ZTT_CPU_NA16 := $(ZTT_CPU_NA16)$(COMMA)ame-num-mregs=16
 ZTT_CPU_NA16 := $(ZTT_CPU_NA16)$(COMMA)ame-num-accregs=16
 ZTT_CPU_DECODE := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=16
 ZTT_CPU_DECODE := $(ZTT_CPU_DECODE)$(COMMA)ame-num-mregs=16
 ZTT_CPU_DECODE := $(ZTT_CPU_DECODE)$(COMMA)ame-num-accregs=1
+ZTT_CPU_INT128 := $(ZTT_CPU)$(COMMA)amenlen=2$(COMMA)ameudsz=64
+ZTT_CPU_INT128 := $(ZTT_CPU_INT128)$(COMMA)ame-num-mregs=32
+ZTT_CPU_INT128 := $(ZTT_CPU_INT128)$(COMMA)ame-num-accregs=1
+ZTT_CPU_FP := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=32
+ZTT_CPU_FP := $(ZTT_CPU_FP)$(COMMA)ame-num-mregs=16
+ZTT_CPU_FP := $(ZTT_CPU_FP)$(COMMA)ame-num-accregs=1
+ZTT_CPU_OCP := $(ZTT_CPU)$(COMMA)amenlen=4$(COMMA)ameudsz=32
+ZTT_CPU_OCP := $(ZTT_CPU_OCP)$(COMMA)ame-num-mregs=16
+ZTT_CPU_OCP := $(ZTT_CPU_OCP)$(COMMA)ame-num-accregs=4
 
 ZTT_SMALL_TESTS := \
 	ztt-system-backend-disabled ztt-system-control ztt-system-csr \
-	ztt-system-priv \
+	ztt-system-helper-globals \
+	ztt-system-move-na1 ztt-system-priv \
 	ztt-system-shared ztt-system-stress ztt-system-stress-full \
 	ztt-system-wait ztt-system-waiters
+ZTT_INT_TESTS := \
+	ztt-system-convert ztt-system-elementwise ztt-system-integer-fused \
+	ztt-system-matrix ztt-system-reduce-int128 \
+	ztt-system-reduce-scatter ztt-system-scatter-widen \
+	ztt-system-structural ztt-system-zip
 
 $(addprefix run-,$(ZTT_SMALL_TESTS)): ZTT_RUN_CPU = $(ZTT_CPU_SMALL)
+$(addprefix run-,$(ZTT_INT_TESTS)): ZTT_RUN_CPU = $(ZTT_CPU_INT)
+run-ztt-system-move: ZTT_RUN_CPU = $(ZTT_CPU_MOVE)
 run-ztt-system-na16: ZTT_RUN_CPU = $(ZTT_CPU_NA16)
 run-ztt-system-decode: ZTT_RUN_CPU = $(ZTT_CPU_DECODE)
+run-ztt-system-matrix-int128: ZTT_RUN_CPU = $(ZTT_CPU_INT128)
+run-ztt-system-fp-int: ZTT_RUN_CPU = $(ZTT_CPU_INT128)
+run-ztt-system-mixed-numeric: ZTT_RUN_CPU = $(ZTT_CPU_INT128)
+run-ztt-system-ieee run-ztt-system-nonlinear: ZTT_RUN_CPU = $(ZTT_CPU_FP)
+run-ztt-system-ieee-nof: ZTT_RUN_CPU = $(ZTT_CPU_FP)$(COMMA)zfa=false$(COMMA)f=false$(COMMA)d=false
+run-ztt-system-ocp: ZTT_RUN_CPU = $(ZTT_CPU_OCP)
 run-ztt-system-priv: ZTT_RUN_CPU := $(ZTT_CPU_SMALL)$(COMMA)h=true
 run-ztt-system-disabled: ZTT_RUN_CPU = rv$(ZTT_XLEN)
 

@@ -10,6 +10,16 @@ ZTT_MARCH := rv$(ZTT_XLEN)imac_zicsr
 
 ZTT_USER_TESTS := \
 	ztt-user-control \
+	ztt-user-convert \
+	ztt-user-elementwise \
+	ztt-user-fp-int \
+	ztt-user-ieee \
+	ztt-user-integer-fused \
+	ztt-user-integer-narrow \
+	ztt-user-matrix \
+	ztt-user-mixed-numeric \
+	ztt-user-reduce-scatter \
+	ztt-user-structural \
 	ztt-user-thread
 
 TESTS += $(ZTT_USER_TESTS)
@@ -23,6 +33,21 @@ ZTT_USER_CPU = rv$(ZTT_XLEN)$(COMMA)x-ztt=true$(COMMA)amenlen=4
 ZTT_USER_CPU := $(ZTT_USER_CPU)$(COMMA)ameudsz=8
 ZTT_USER_CPU := $(ZTT_USER_CPU)$(COMMA)ame-num-mregs=16
 ZTT_USER_CPU := $(ZTT_USER_CPU)$(COMMA)ame-num-accregs=1
+ZTT_USER_FP_CPU = rv$(ZTT_XLEN)$(COMMA)x-ztt=true$(COMMA)amenlen=4
+ZTT_USER_FP_CPU := $(ZTT_USER_FP_CPU)$(COMMA)ameudsz=32
+ZTT_USER_FP_CPU := $(ZTT_USER_FP_CPU)$(COMMA)ame-num-mregs=16
+ZTT_USER_FP_CPU := $(ZTT_USER_FP_CPU)$(COMMA)ame-num-accregs=1
 
-$(addprefix run-,$(ZTT_USER_TESTS)): \
+$(addprefix run-,$(filter-out ztt-user-ieee ztt-user-fp-int \
+	ztt-user-mixed-numeric,$(ZTT_USER_TESTS))): \
 	QEMU_OPTS += -cpu $(ZTT_USER_CPU)
+run-ztt-user-ieee: QEMU_OPTS += -cpu $(ZTT_USER_FP_CPU)
+
+ZTT_USER_FP_INT_CPU = rv$(ZTT_XLEN)$(COMMA)x-ztt=true$(COMMA)amenlen=2
+ZTT_USER_FP_INT_CPU := $(ZTT_USER_FP_INT_CPU)$(COMMA)ameudsz=64
+ZTT_USER_FP_INT_CPU := $(ZTT_USER_FP_INT_CPU)$(COMMA)ame-num-mregs=32
+ZTT_USER_FP_INT_CPU := $(ZTT_USER_FP_INT_CPU)$(COMMA)ame-num-accregs=1
+run-ztt-user-fp-int: QEMU_OPTS += -cpu $(ZTT_USER_FP_INT_CPU)
+run-ztt-user-mixed-numeric: QEMU_OPTS += -cpu $(ZTT_USER_FP_INT_CPU)
+ztt-user-fp-int: $(ZTT_TEST_SRC)/include/ztt-fp-int.S
+ztt-user-mixed-numeric: $(ZTT_TEST_SRC)/include/ztt-mixed-numeric.S
