@@ -54,6 +54,12 @@ tests = {
     '../../target/riscv/ame/tuple-set.c',
     '../../target/riscv/ame/cap-set.c',
   ],
+  'test-riscv-ame-layout': [
+    '../../target/riscv/ame/datatype.c',
+    '../../target/riscv/ame/cap-set.c',
+    '../../target/riscv/ame/tuple-set.c',
+    '../../target/riscv/ame/layout.c',
+  ],
   'test-qgraph': ['../qtest/libqos/qgraph.c'],
   'check-qom-interface': [qom],
   'check-qom-proplist': [qom],
