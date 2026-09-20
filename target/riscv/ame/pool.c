@@ -11,6 +11,7 @@
 #include "hw/core/resettable.h"
 #include "qemu/module.h"
 #include "target/riscv/ame/pool.h"
+#include "target/riscv/ame/migration.h"
 
 static bool riscv_ame_backend_pool_prepare(RISCVAMEBackendPool *pool,
                                            Error **errp)
@@ -94,6 +95,7 @@ static void riscv_ame_backend_pool_class_init(ObjectClass *oc,
 
     dc->realize = riscv_ame_backend_pool_realize;
     dc->unrealize = riscv_ame_backend_pool_unrealize;
+    dc->vmsd = riscv_ame_backend_pool_vmstate();
     dc->user_creatable = false;
     device_class_set_props(dc, riscv_ame_backend_pool_properties);
     rc->phases.hold = riscv_ame_backend_pool_reset_hold;

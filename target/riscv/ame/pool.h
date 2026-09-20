@@ -23,6 +23,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(RISCVAMEBackendPool, RISCV_AME_BACKEND_POOL)
 struct RISCVAMEBackendPool {
     DeviceState parent_obj;
 
+    /* VMState anchor for the explicit variable-length wire format. */
+    uint8_t migration_anchor;
     uint32_t num_slots;
     bool enabled;
     RISCVAMEBackendPoolCore core;

@@ -562,6 +562,64 @@ void riscv_ame_wait_cancel(RISCVAMEState *state)
     riscv_ame_waiter_finish(&handle);
 }
 
+#if AME_SYSTEM_MODE
+bool riscv_ame_wait_restore(RISCVAMEState *state, Object *hart,
+                            uint64_t descriptor,
+                            RISCVAMEWaitTerminal terminal,
+                            int64_t remaining_ns, Error **errp)
+{
+    RISCVAMEBackendPoolCore *pool;
+    bool bounded_wait;
+    int64_t timeout_ns;
+    int64_t now;
+
+    if (state == NULL || hart == NULL) {
+        error_setg(errp, "Invalid Ztt pending acquire migration state");
+        return false;
+    }
+    pool = state->pool;
+    if (pool == NULL || !pool->lock_initialized || !pool->realized ||
+        !pool->enabled || state->wait_active ||
+        riscv_ame_state_owned(state, hart) ||
+        !riscv_ame_acquire_descriptor_decode(descriptor, &bounded_wait,
+                                              &timeout_ns) ||
+        !bounded_wait || terminal > RISCV_AME_WAIT_INTERRUPTED ||
+        remaining_ns < 0 || remaining_ns > timeout_ns ||
+        (terminal != RISCV_AME_WAIT_NONE && remaining_ns != 0)) {
+        error_setg(errp, "Invalid Ztt pending acquire migration state");
+        return false;
+    }
+
+    now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    qemu_mutex_lock(&pool->lock);
+    if (state->wait_active || state->active_slot >= 0) {
+        qemu_mutex_unlock(&pool->lock);
+        error_setg(errp, "Ztt owner cannot also have a pending acquire");
+        return false;
+    }
+    state->wait_active = true;
+    state->wait_hart = hart;
+    state->wait_descriptor = descriptor;
+    state->wait_deadline_ns = remaining_ns > INT64_MAX - now ?
+                              INT64_MAX : now + remaining_ns;
+    state->wait_generation = pool->generation - 1;
+    state->wait_terminal = terminal;
+    /*
+     * The generation mismatch makes a nonterminal wait rescan before expiry
+     * can become terminal, preserving releases before source quiescence.
+     */
+    qatomic_set(&state->wait_wake, true);
+    object_ref(hart);
+    QTAILQ_INSERT_TAIL(&pool->waiters, state, waiter_link);
+    qemu_mutex_unlock(&pool->lock);
+
+    if (terminal == RISCV_AME_WAIT_NONE) {
+        timer_mod_ns(state->wait_timer, state->wait_deadline_ns);
+    }
+    return true;
+}
+#endif
+
 RISCVAMEAcquireResult riscv_ame_acquire(RISCVAMEState *state, Object *hart,
                                         bool bounded_wait,
                                         uint64_t descriptor,

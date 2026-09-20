@@ -767,6 +767,188 @@ static void test_bounded_wait(void)
     object_unref(owner);
 }
 
+static void test_wait_restore(void)
+{
+    RISCVAMEBackendPoolCore pool = { 0 };
+    RISCVAMEState owner_state = { 0 };
+    RISCVAMEState waiter_state = { 0 };
+    Object *owner = new_test_hart();
+    Object *waiter = new_test_hart();
+    Error *err = NULL;
+    bool new_grant;
+
+    g_assert_true(riscv_ame_pool_init(&pool, 1, true, &error_abort));
+    configure_small_pool(&pool);
+    g_assert_true(riscv_ame_pool_realize(&pool, &error_abort));
+    g_assert_true(riscv_ame_state_attach(&owner_state, &pool, &error_abort));
+    g_assert_true(riscv_ame_state_attach(&waiter_state, &pool, &error_abort));
+
+    g_assert_cmpint(riscv_ame_acquire(
+                        &owner_state, owner, false, 0, 0, &new_grant), ==,
+                    RISCV_AME_ACQUIRE_GRANTED);
+    g_assert_true(riscv_ame_wait_restore(
+        &waiter_state, waiter, 1, RISCV_AME_WAIT_NONE,
+        SCALE_MS / 2, &error_abort));
+    g_assert_true(waiter_state.wait_active);
+    g_assert_true(riscv_ame_wait_has_wake(&waiter_state));
+    g_assert_true(waiter_state.wait_hart == waiter);
+    g_assert_false(QTAILQ_EMPTY(&pool.waiters));
+
+    g_assert_false(riscv_ame_wait_restore(
+        &waiter_state, waiter, 1, RISCV_AME_WAIT_NONE,
+        SCALE_MS / 2, &err));
+    g_assert_nonnull(err);
+    error_free(err);
+    err = NULL;
+    riscv_ame_wait_cancel(&waiter_state);
+
+    g_assert_true(riscv_ame_wait_restore(
+        &waiter_state, waiter, 1, RISCV_AME_WAIT_TIMEOUT, 0,
+        &error_abort));
+    g_assert_cmpint(riscv_ame_acquire(
+                        &waiter_state, waiter, true, 1, SCALE_MS,
+                        &new_grant), ==, RISCV_AME_ACQUIRE_TIMEOUT);
+    g_assert_false(waiter_state.wait_active);
+
+    g_assert_false(riscv_ame_wait_restore(
+        &waiter_state, waiter, 0, RISCV_AME_WAIT_NONE, 0, &err));
+    g_assert_nonnull(err);
+    error_free(err);
+    err = NULL;
+    g_assert_false(riscv_ame_wait_restore(
+        &waiter_state, waiter, 1, RISCV_AME_WAIT_INTERRUPTED, 1, &err));
+    g_assert_nonnull(err);
+    error_free(err);
+
+    g_assert_true(riscv_ame_release(&owner_state, owner));
+    riscv_ame_state_destroy(&waiter_state);
+    riscv_ame_state_destroy(&owner_state);
+    riscv_ame_pool_destroy(&pool);
+    object_unref(waiter);
+    object_unref(owner);
+}
+
+static void check_wait_restore_boundary(uint64_t generation,
+                                        RISCVAMEWaitTerminal terminal,
+                                        bool busy, bool remaining,
+                                        bool timer_first)
+{
+    const uint64_t descriptor = (UINT64_C(3) << 2) | 1;
+    const int64_t timeout_ns = 1000 * SCALE_MS;
+    RISCVAMEBackendPoolCore pool = { 0 };
+    RISCVAMEState owner = { 0 }, waiter = { 0 };
+    Object *owner_hart = new_test_hart();
+    Object *waiter_hart = new_test_hart();
+    Error *err = NULL;
+    RISCVAMEAcquireResult expected, actual;
+    bool new_grant;
+    bool valid = terminal == RISCV_AME_WAIT_NONE || !remaining;
+
+    g_assert_true(riscv_ame_pool_init(&pool, 1, true, &error_abort));
+    configure_small_pool(&pool);
+    g_assert_true(riscv_ame_pool_realize(&pool, &error_abort));
+    g_assert_true(riscv_ame_state_attach(&owner, &pool, &error_abort));
+    g_assert_true(riscv_ame_state_attach(&waiter, &pool, &error_abort));
+    if (busy) {
+        g_assert_cmpint(riscv_ame_acquire(
+            &owner, owner_hart, false, 0, 0, &new_grant), ==,
+            RISCV_AME_ACQUIRE_GRANTED);
+    }
+    pool.generation = generation;
+
+    g_assert_cmpint(riscv_ame_wait_restore(
+        &waiter, waiter_hart, descriptor, terminal,
+        remaining ? timeout_ns : 0, &err), ==, valid);
+    if (!valid) {
+        g_assert_nonnull(err);
+        error_free(err);
+        g_assert_false(waiter.wait_active);
+        g_assert_cmpint(waiter.active_slot, ==, -1);
+        g_assert_true(QTAILQ_EMPTY(&pool.waiters));
+        g_assert_false(timer_pending(waiter.wait_timer));
+    } else {
+        g_assert_null(err);
+        g_assert_cmpuint(waiter.wait_generation, ==, generation - 1);
+        if (generation == 0) {
+            g_assert_cmpuint(waiter.wait_generation, ==, UINT64_MAX);
+        }
+        g_assert_true(riscv_ame_wait_has_wake(&waiter));
+        g_assert_cmpint(timer_pending(waiter.wait_timer), ==,
+                        terminal == RISCV_AME_WAIT_NONE);
+        if (timer_first) {
+            force_wait_timer(&waiter);
+            g_assert_cmpint(waiter.wait_terminal, ==, RISCV_AME_WAIT_NONE);
+        }
+
+        /* Terminal results win; otherwise rescan availability before expiry. */
+        if (terminal == RISCV_AME_WAIT_TIMEOUT) {
+            expected = RISCV_AME_ACQUIRE_TIMEOUT;
+        } else if (terminal == RISCV_AME_WAIT_INTERRUPTED) {
+            expected = RISCV_AME_ACQUIRE_INTERRUPTED;
+        } else if (!busy) {
+            expected = RISCV_AME_ACQUIRE_GRANTED;
+        } else {
+            expected = remaining ? RISCV_AME_ACQUIRE_WAIT :
+                                   RISCV_AME_ACQUIRE_TIMEOUT;
+        }
+        actual = riscv_ame_acquire(&waiter, waiter_hart, true, descriptor,
+                                    timeout_ns, &new_grant);
+        g_assert_cmpint(actual, ==, expected);
+        g_assert_cmpint(new_grant, ==, expected == RISCV_AME_ACQUIRE_GRANTED);
+        if (actual == RISCV_AME_ACQUIRE_WAIT) {
+            /* The bypass is one-shot: an unsuccessful rescan can expire. */
+            g_assert_cmpuint(waiter.wait_generation, ==, pool.generation);
+            force_wait_timer(&waiter);
+            g_assert_cmpint(waiter.wait_terminal, ==, RISCV_AME_WAIT_TIMEOUT);
+            g_assert_cmpint(riscv_ame_acquire(
+                &waiter, waiter_hart, true, descriptor, timeout_ns,
+                &new_grant), ==, RISCV_AME_ACQUIRE_TIMEOUT);
+            g_assert_false(new_grant);
+        }
+        g_assert_false(waiter.wait_active);
+        g_assert_true(QTAILQ_EMPTY(&pool.waiters));
+        g_assert_false(timer_pending(waiter.wait_timer));
+        g_assert_cmpint(waiter.wait_terminal, ==, RISCV_AME_WAIT_NONE);
+        g_assert_cmpint(riscv_ame_state_owned(&waiter, waiter_hart), ==,
+                        expected == RISCV_AME_ACQUIRE_GRANTED);
+    }
+
+    riscv_ame_state_destroy(&waiter);
+    riscv_ame_state_destroy(&owner);
+    riscv_ame_pool_destroy(&pool);
+    object_unref(waiter_hart);
+    object_unref(owner_hart);
+}
+
+static void test_wait_restore_boundaries(void)
+{
+    static const uint64_t generations[] = { 0, 7 };
+    static const RISCVAMEWaitTerminal terminals[] = {
+        RISCV_AME_WAIT_NONE, RISCV_AME_WAIT_TIMEOUT, RISCV_AME_WAIT_INTERRUPTED,
+    };
+    unsigned checked = 0;
+
+    for (size_t g = 0; g < ARRAY_SIZE(generations); g++) {
+        for (size_t t = 0; t < ARRAY_SIZE(terminals); t++) {
+            for (unsigned busy = 0; busy < 2; busy++) {
+                for (unsigned remaining = 0; remaining < 2; remaining++) {
+                    check_wait_restore_boundary(generations[g], terminals[t],
+                                                 busy, remaining, false);
+                    checked++;
+                    if (terminals[t] == RISCV_AME_WAIT_NONE && !remaining) {
+                        check_wait_restore_boundary(
+                            generations[g], terminals[t], busy, remaining,
+                            true);
+                        checked++;
+                    }
+                }
+            }
+        }
+    }
+    g_assert_cmpuint(checked, ==, 28);
+    g_test_message("%u restore cases: 20 valid and 8 rejected", checked);
+}
+
 typedef struct AmeConcurrentAcquire {
     RISCVAMEState *state;
     Object *hart;
@@ -997,6 +1179,9 @@ int main(int argc, char **argv)
                     test_acquire_descriptor);
     g_test_add_func("/riscv/ame/backend/try", test_try_acquire_release);
     g_test_add_func("/riscv/ame/backend/bounded-wait", test_bounded_wait);
+    g_test_add_func("/riscv/ame/backend/wait-restore", test_wait_restore);
+    g_test_add_func("/riscv/ame/backend/wait-restore-boundaries",
+                    test_wait_restore_boundaries);
     g_test_add_func("/riscv/ame/backend/concurrent-try", test_concurrent_try);
     g_test_add_func("/riscv/ame/backend/lockless-access",
                     test_owned_access_is_lockless);

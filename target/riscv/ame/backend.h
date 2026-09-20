@@ -122,6 +122,10 @@ typedef enum RISCVAMEWaitTerminal {
  * is allocated and destroyed by this state.
  */
 struct RISCVAMEState {
+    /* VMState anchor and subsection presence marker. */
+    uint8_t migration_anchor;
+    bool migration_seen;
+
     RISCVAMEBackendPoolCore *pool; /* Attached pool; borrowed if shared. */
     RISCVAMEBackendPoolCore *private_pool; /* Owned one-slot pool, or NULL. */
     int32_t active_slot; /* Bound slot index; -1 after attach when unowned. */
@@ -373,6 +377,25 @@ bool riscv_ame_wait_interrupt(RISCVAMEState *state, Object *hart);
  * reference. Keep the reusable timer allocated for subsequent waits.
  */
 void riscv_ame_wait_cancel(RISCVAMEState *state);
+
+/**
+ * riscv_ame_wait_restore: Rebuild a saved bounded acquire in system mode
+ * @state: Attached, unowned hart state with no active wait
+ * @hart: Waiting hart; a reference is taken on success
+ * @descriptor: Original bounded-wait descriptor
+ * @terminal: Saved terminal result, or NONE for a still-pending wait
+ * @remaining_ns: Remaining virtual-clock timeout; zero for a terminal result
+ * @errp: Error destination
+ *
+ * Validate the saved timeout, insert the waiter and arm its timer if needed.
+ * Set the wake hint so the instruction rescans the pool after restoration.
+ *
+ * Returns: true on success; false on inconsistent saved state, setting @errp.
+ */
+bool riscv_ame_wait_restore(RISCVAMEState *state, Object *hart,
+                            uint64_t descriptor,
+                            RISCVAMEWaitTerminal terminal,
+                            int64_t remaining_ns, Error **errp);
 
 /**
  * riscv_ame_state_owned: Check the hart's atomically published slot ownership

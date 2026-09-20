@@ -54,6 +54,12 @@ tests = {
     '../../target/riscv/ame/tuple-set.c',
     '../../target/riscv/ame/cap-set.c',
   ],
+  'test-riscv-ame-cap-wire': [
+    '../../target/riscv/ame/datatype.c',
+    '../../target/riscv/ame/tuple-set.c',
+    '../../target/riscv/ame/cap-set.c',
+    '../../target/riscv/ame/cap-wire.c',
+  ],
   'test-riscv-ame-exec': [
     '../../target/riscv/ame/datatype.c',
     '../../target/riscv/ame/cap-set.c',

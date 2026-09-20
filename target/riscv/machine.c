@@ -23,6 +23,7 @@
 #include "system/tcg.h"
 #include "migration/cpu.h"
 #include "exec/icount.h"
+#include "target/riscv/ame/migration.h"
 #include "target/riscv/tcg/debug.h"
 #include "hw/riscv/machines-qom.h"
 
@@ -265,13 +266,21 @@ static const VMStateDescription vmstate_debug = {
     }
 };
 
+static int riscv_cpu_pre_load(void *opaque)
+{
+    RISCVCPU *cpu = opaque;
+
+    riscv_ame_migration_pre_load(cpu);
+    return 0;
+}
+
 static int riscv_cpu_post_load(void *opaque, int version_id)
 {
     RISCVCPU *cpu = opaque;
     CPURISCVState *env = &cpu->env;
 
     env->xl = cpu_recompute_xl(env);
-    return 0;
+    return riscv_ame_migration_post_load(cpu);
 }
 
 static bool smstateen_needed(void *opaque)
@@ -459,6 +468,7 @@ const VMStateDescription vmstate_riscv_cpu = {
     .name = "cpu",
     .version_id = 11,
     .minimum_version_id = 11,
+    .pre_load = riscv_cpu_pre_load,
     .post_load = riscv_cpu_post_load,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT64_ARRAY(env.gpr, RISCVCPU, 32),
@@ -518,6 +528,7 @@ const VMStateDescription vmstate_riscv_cpu = {
         &vmstate_pmp,
         &vmstate_hyper,
         &vmstate_vector,
+        &vmstate_riscv_ame_hart,
         &vmstate_pointermasking,
         &vmstate_rv128,
 #ifdef CONFIG_KVM
