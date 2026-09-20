@@ -54,6 +54,12 @@ tests = {
     '../../target/riscv/ame/tuple-set.c',
     '../../target/riscv/ame/cap-set.c',
   ],
+  'test-riscv-ame-fp': [
+    '../../target/riscv/ame/datatype.c',
+    '../../target/riscv/ame/fp.c',
+    '../../target/riscv/ame/int.c',
+    '../../fpu/softfloat.c',
+  ],
   'test-riscv-ame-int': [
     '../../target/riscv/ame/datatype.c',
     '../../target/riscv/ame/int.c',
@@ -207,6 +213,7 @@ slow_tests = {
   'test-crypto-block' : 300,
   'test-crypto-tlscredsx509': 90,
   'test-crypto-tlssession': 90,
+  'test-riscv-ame-fp': 300,
   'test-replication': 60,
 }
 

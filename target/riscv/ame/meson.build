@@ -6,6 +6,7 @@ riscv_ss.add(files(
 ))
 
 riscv_ss.add(when: 'CONFIG_TCG', if_true: files(
+  'fp.c',
   'int.c',
 ))
 
