@@ -43,6 +43,10 @@ tests = {
   'test-riscv-ame-datatype': [
     '../../target/riscv/ame/datatype.c',
   ],
+  'test-riscv-ame-tuple-set': [
+    '../../target/riscv/ame/datatype.c',
+    '../../target/riscv/ame/tuple-set.c',
+  ],
   'test-qgraph': ['../qtest/libqos/qgraph.c'],
   'check-qom-interface': [qom],
   'check-qom-proplist': [qom],
