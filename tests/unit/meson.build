@@ -60,6 +60,9 @@ tests = {
     '../../target/riscv/ame/cap-set.c',
     '../../target/riscv/ame/cap-wire.c',
   ],
+  'test-riscv-ame-insn': [
+    riscv_ztt_decode,
+  ],
   'test-riscv-ame-exec': [
     '../../target/riscv/ame/datatype.c',
     '../../target/riscv/ame/cap-set.c',
