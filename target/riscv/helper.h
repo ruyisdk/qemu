@@ -1,6 +1,40 @@
 /* Exceptions */
 DEF_HELPER_2(raise_exception, noreturn, env, i32)
 
+/* Attached Matrix Extension (Ztt) */
+DEF_HELPER_2(ame_acquire, tl, env, tl)
+DEF_HELPER_1(ame_release, void, env)
+DEF_HELPER_2(ame_mgettyp, tl, env, i32)
+DEF_HELPER_2(ame_agettyp, tl, env, i32)
+DEF_HELPER_3(ame_msettyp, void, env, i32, tl)
+DEF_HELPER_3(ame_asettyp, void, env, i32, tl)
+DEF_HELPER_FLAGS_2(ame_zero_m, TCG_CALL_NO_WG, void, env, i32)
+DEF_HELPER_FLAGS_2(ame_zero_acc, TCG_CALL_NO_WG, void, env, i32)
+DEF_HELPER_FLAGS_3(ame_mov_m_m, TCG_CALL_NO_WG, void, env, i32, i32)
+DEF_HELPER_FLAGS_3(ame_mov_m_a, TCG_CALL_NO_WG, void, env, i32, i32)
+DEF_HELPER_FLAGS_3(ame_mov_a_m, TCG_CALL_NO_WG, void, env, i32, i32)
+DEF_HELPER_FLAGS_3(ame_convert, TCG_CALL_NO_WG, void, env, i32, i32)
+DEF_HELPER_FLAGS_4(ame_unary, TCG_CALL_NO_WG, void, env, i32, i32, i32)
+DEF_HELPER_FLAGS_5(ame_binary, TCG_CALL_NO_WG, void, env, i32, i32, i32, i32)
+DEF_HELPER_FLAGS_5(ame_ternary, TCG_CALL_NO_WG, void, env, i32, i32, i32, i32)
+DEF_HELPER_FLAGS_6(ame_scalar, TCG_CALL_NO_WG, void,
+                   env, i32, i32, i32, tl, i32)
+DEF_HELPER_FLAGS_6(ame_ternary_scalar, TCG_CALL_NO_WG, void,
+                   env, i32, i32, i32, tl, i32)
+DEF_HELPER_FLAGS_5(ame_matmul, TCG_CALL_NO_WG, void, env, i32, i32, i32, i32)
+DEF_HELPER_FLAGS_5(ame_permute, TCG_CALL_NO_WG, void, env, i32, i32, tl, i32)
+DEF_HELPER_FLAGS_5(ame_gather, TCG_CALL_NO_WG, void, env, i32, i32, i32, i32)
+DEF_HELPER_FLAGS_5(ame_scatter, TCG_CALL_NO_WG, void, env, i32, i32, i32, i32)
+DEF_HELPER_FLAGS_4(ame_scan, TCG_CALL_NO_WG, void, env, i32, i32, i32)
+DEF_HELPER_FLAGS_3(ame_index, TCG_CALL_NO_WG, void, env, i32, i32)
+DEF_HELPER_FLAGS_4(ame_zip, TCG_CALL_NO_WG, void, env, i32, i32, i32)
+DEF_HELPER_FLAGS_4(ame_bcast, TCG_CALL_NO_WG, void, env, i32, tl, tl)
+DEF_HELPER_FLAGS_5(ame_pack, TCG_CALL_NO_WG, void, env, i32, i32, tl, i32)
+DEF_HELPER_5(ame_load, void, env, i32, tl, tl, i32)
+DEF_HELPER_5(ame_store, void, env, i32, tl, tl, i32)
+DEF_HELPER_5(ame_debug_write, void, env, i32, tl, tl, i32)
+DEF_HELPER_4(ame_debug_read, tl, env, i32, tl, i32)
+
 /* Floating Point - rounding mode */
 DEF_HELPER_FLAGS_2(set_rounding_mode, TCG_CALL_NO_WG, void, env, i32)
 DEF_HELPER_FLAGS_2(set_rounding_mode_chkfrm, TCG_CALL_NO_WG, void, env, i32)

@@ -3,6 +3,8 @@ if 'CONFIG_TCG' not in config_all_accel
 endif
 
 riscv_ss.add(files(
+  'ame_helper.c',
+  'ame_mem.c',
   'bitmanip_helper.c',
  'cpu_helper.c',
   'csr.c',
@@ -25,5 +27,4 @@ riscv_system_ss.add(files(
   'pmu.c',
   'th_csr.c',
 ))
-
 
