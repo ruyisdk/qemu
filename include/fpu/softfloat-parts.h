@@ -136,6 +136,25 @@ typedef struct {
     uint64_t frac_lo;
 } FloatParts128;
 
+typedef struct {
+    FloatClass cls;
+    bool sign;
+    int32_t exp;
+    uint64_t frac_hi;
+    uint64_t frac_hm;  /* high-middle */
+    uint64_t frac_lm;  /* low-middle */
+    uint64_t frac_lo;
+} FloatParts256;
+
+/*
+ * Resize canonical parts without format rounding or exception handling.
+ * Widening appends zero fraction bits. Narrowing jams discarded nonzero
+ * fraction bits into the least significant bit for later format rounding.
+ * Both preserve the sign and class, including signaling NaNs.
+ */
+FloatParts256 parts128_to_parts256(const FloatParts128 *a);
+FloatParts128 parts256_to_parts128(const FloatParts256 *a);
+
 /*
  * Unpack routines from a specific floating-point format.
  */
@@ -175,22 +194,34 @@ floatx80 floatx80_round_pack_canonical(FloatParts128 *p, float_status *s);
 
 FloatParts64 parts64_default_nan(float_status *status);
 FloatParts128 parts128_default_nan(float_status *status);
+FloatParts256 parts256_default_nan(float_status *status);
 
 FloatParts64 parts64_pick_nan(const FloatParts64 *, const FloatParts64 *,
                               float_status *);
 FloatParts128 parts128_pick_nan(const FloatParts128 *, const FloatParts128 *,
                                 float_status *);
+FloatParts256 parts256_pick_nan(const FloatParts256 *, const FloatParts256 *,
+                                float_status *);
 
 FloatParts64 parts64_return_nan(const FloatParts64 *a, float_status *s);
 FloatParts128 parts128_return_nan(const FloatParts128 *a, float_status *s);
+FloatParts256 parts256_return_nan(const FloatParts256 *a, float_status *s);
 
 /*
  * Operations
  */
 
+/*
+ * Addition/subtraction need spare low fraction bits for exponent alignment.
+ * Widen full 128-bit significands to FloatParts256. The result can then be
+ * jammed to FloatParts128 for binary128 or narrower destination rounding;
+ * the jammed fraction is not an exact 128-bit result.
+ */
 FloatParts64 parts64_addsub(const FloatParts64 *a, const FloatParts64 *b,
                             float_status *s, bool subtract);
 FloatParts128 parts128_addsub(const FloatParts128 *a, const FloatParts128 *b,
+                              float_status *s, bool subtract);
+FloatParts256 parts256_addsub(const FloatParts256 *a, const FloatParts256 *b,
                               float_status *s, bool subtract);
 
 FloatRelation parts64_compare(const FloatParts64 *a, const FloatParts64 *b,
@@ -207,7 +238,14 @@ FloatParts64 parts64_mul(const FloatParts64 *a, const FloatParts64 *b,
                          float_status *s);
 FloatParts128 parts128_mul(const FloatParts128 *a, const FloatParts128 *b,
                            float_status *s);
+FloatParts256 parts256_mul(const FloatParts256 *a, const FloatParts256 *b,
+                           float_status *s);
 
+/*
+ * For full 128-bit significands, use parts256_muladd so that the 512-bit
+ * workspace leaves guard bits beyond the 256-bit product. As with addsub,
+ * the returned parts still require rounding to the destination format.
+ */
 FloatParts64 parts64_muladd(const FloatParts64 *a,
                             const FloatParts64 *b,
                             const FloatParts64 *c,
@@ -215,6 +253,10 @@ FloatParts64 parts64_muladd(const FloatParts64 *a,
 FloatParts128 parts128_muladd(const FloatParts128 *a,
                               const FloatParts128 *b,
                               const FloatParts128 *c,
+                              int flags, float_status *s);
+FloatParts256 parts256_muladd(const FloatParts256 *a,
+                              const FloatParts256 *b,
+                              const FloatParts256 *c,
                               int flags, float_status *s);
 
 FloatParts64 parts64_round_to_int(const FloatParts64 *a,

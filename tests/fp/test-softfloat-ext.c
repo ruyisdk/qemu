@@ -1469,6 +1469,604 @@ static void test_int128_canonical(void)
     g_assert_cmphex(zero.frac_lo, ==, 0);
 }
 
+static FloatParts128 addsub256(const FloatParts128 *a, const FloatParts128 *b,
+                               float_status *status, bool subtract)
+{
+    FloatParts256 left = parts128_to_parts256(a);
+    FloatParts256 right = parts128_to_parts256(b);
+    FloatParts256 result = parts256_addsub(&left, &right, status, subtract);
+
+    return parts256_to_parts128(&result);
+}
+
+static FloatParts128 muladd256(const FloatParts128 *a, const FloatParts128 *b,
+                               const FloatParts128 *c, int flags,
+                               float_status *status)
+{
+    FloatParts256 left = parts128_to_parts256(a);
+    FloatParts256 right = parts128_to_parts256(b);
+    FloatParts256 addend = parts128_to_parts256(c);
+    FloatParts256 result = parts256_muladd(&left, &right, &addend, flags,
+                                          status);
+
+    return parts256_to_parts128(&result);
+}
+
+static void test_parts256_conversions(void)
+{
+    for (unsigned bit = 0; bit < 128; bit++) {
+        Int128 input = int128_or(int128_lshift(int128_one(), bit),
+                                int128_one());
+        FloatParts128 original = uint128_unpack_canonical(input);
+
+        for (unsigned sign = 0; sign < 2; sign++) {
+            FloatParts256 wide;
+            FloatParts128 restored;
+
+            original.sign = sign;
+            wide = parts128_to_parts256(&original);
+            restored = parts256_to_parts128(&wide);
+            g_assert_cmpint(wide.cls, ==, original.cls);
+            g_assert_cmpint(wide.sign, ==, original.sign);
+            g_assert_cmpint(wide.exp, ==, original.exp);
+            g_assert_cmphex(wide.frac_hi, ==, original.frac_hi);
+            g_assert_cmphex(wide.frac_hm, ==, original.frac_lo);
+            g_assert_cmphex(wide.frac_lm, ==, 0);
+            g_assert_cmphex(wide.frac_lo, ==, 0);
+            g_assert_cmpint(restored.cls, ==, original.cls);
+            g_assert_cmpint(restored.sign, ==, original.sign);
+            g_assert_cmpint(restored.exp, ==, original.exp);
+            g_assert_cmphex(restored.frac_hi, ==, original.frac_hi);
+            g_assert_cmphex(restored.frac_lo, ==, original.frac_lo);
+        }
+    }
+
+    for (unsigned bit = 0; bit < 128; bit++) {
+        FloatParts256 wide = {
+            .cls = float_class_normal, .sign = true, .exp = -129,
+            .frac_hi = BIT_ULL(63), .frac_hm = 2,
+            .frac_lm = bit >= 64 ? BIT_ULL(bit - 64) : 0,
+            .frac_lo = bit < 64 ? BIT_ULL(bit) : 0,
+        };
+        FloatParts128 narrow = parts256_to_parts128(&wide);
+
+        g_assert_cmpint(narrow.cls, ==, float_class_normal);
+        g_assert_true(narrow.sign);
+        g_assert_cmpint(narrow.exp, ==, -129);
+        g_assert_cmphex(narrow.frac_hi, ==, BIT_ULL(63));
+        g_assert_cmphex(narrow.frac_lo, ==, 3);
+    }
+
+    for (FloatClass cls = float_class_zero; cls <= float_class_snan; cls++) {
+        for (unsigned sign = 0; sign < 2; sign++) {
+            FloatParts128 original = {
+                .cls = cls, .sign = sign, .exp = -5,
+                .frac_hi = BIT_ULL(63) | BIT_ULL(61), .frac_lo = 42,
+            };
+            FloatParts256 wide;
+            FloatParts128 restored;
+
+            if (cls == float_class_qnan || cls == float_class_snan) {
+                original.frac_hi = cls == float_class_qnan ?
+                    BIT_ULL(62) | BIT_ULL(61) : BIT_ULL(61);
+            }
+            wide = parts128_to_parts256(&original);
+            restored = parts256_to_parts128(&wide);
+
+            g_assert_cmpint(restored.cls, ==, cls);
+            g_assert_cmpint(restored.sign, ==, sign);
+            if (cls != float_class_zero && cls != float_class_inf) {
+                g_assert_cmphex(restored.frac_hi, ==, original.frac_hi);
+                g_assert_cmphex(restored.frac_lo, ==, original.frac_lo);
+            }
+        }
+    }
+}
+
+static void test_parts256_nan(void)
+{
+    static const uint8_t patterns[] = { 0x40, 0x41, 0xc1, 0x7f };
+    const FloatParts256 larger[] = {
+        { .cls = float_class_qnan, .frac_hi = BIT_ULL(62) | 1 },
+        { .cls = float_class_qnan, .frac_hi = BIT_ULL(62), .frac_hm = 1 },
+        { .cls = float_class_qnan, .frac_hi = BIT_ULL(62), .frac_lm = 1 },
+        { .cls = float_class_qnan, .frac_hi = BIT_ULL(62), .frac_lo = 1 },
+    };
+    FloatParts256 smaller = { .cls = float_class_qnan, .frac_hi = BIT_ULL(62) };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(patterns); i++) {
+        float_status status = make_status();
+        FloatParts128 expected, narrow;
+        FloatParts256 wide;
+
+        set_float_default_nan_pattern(patterns[i], &status);
+        expected = parts128_default_nan(&status);
+        wide = parts256_default_nan(&status);
+        narrow = parts256_to_parts128(&wide);
+        g_assert_cmpint(wide.cls, ==, float_class_qnan);
+        g_assert_cmpint(wide.sign, ==, expected.sign);
+        g_assert_cmphex(wide.frac_lm, ==, expected.frac_lo);
+        g_assert_cmphex(wide.frac_lo, ==, expected.frac_lo);
+        g_assert_cmphex(narrow.frac_hi, ==, expected.frac_hi);
+        g_assert_cmphex(narrow.frac_lo, ==, expected.frac_lo);
+        g_assert_cmphex(get_float_exception_flags(&status), ==, 0);
+    }
+
+    for (unsigned i = 0; i < ARRAY_SIZE(larger); i++) {
+        for (unsigned reverse = 0; reverse < 2; reverse++) {
+            float_status status =
+                make_accrued_status(float_round_nearest_even);
+            FloatParts256 result;
+
+            set_default_nan_mode(false, &status);
+            set_float_2nan_prop_rule(float_2nan_prop_x87, &status);
+            result = parts256_pick_nan(reverse ? &larger[i] : &smaller,
+                                      reverse ? &smaller : &larger[i],
+                                      &status);
+            g_assert_cmpint(result.cls, ==, float_class_qnan);
+            g_assert_cmphex(result.frac_hi, ==, larger[i].frac_hi);
+            g_assert_cmphex(result.frac_hm, ==, larger[i].frac_hm);
+            g_assert_cmphex(result.frac_lm, ==, larger[i].frac_lm);
+            g_assert_cmphex(result.frac_lo, ==, larger[i].frac_lo);
+            g_assert_cmphex(get_float_exception_flags(&status), ==,
+                            float_flag_divbyzero);
+        }
+    }
+
+    for (unsigned inverted = 0; inverted < 2; inverted++) {
+        FloatParts256 input = larger[ARRAY_SIZE(larger) - 1];
+        float_status status = make_status();
+        FloatParts256 result;
+
+        set_default_nan_mode(false, &status);
+        set_snan_rule(inverted ? float_snan_bit_is_one : float_snan_bit_is_zero,
+                      &status);
+        input.cls = float_class_snan;
+        input.frac_hi = inverted ? BIT_ULL(62) : BIT_ULL(61);
+        result = parts256_return_nan(&input, &status);
+        g_assert_cmpint(result.cls, ==, float_class_qnan);
+        g_assert_cmphex(result.frac_hi, ==, inverted ? BIT_ULL(61) :
+                                            BIT_ULL(62) | BIT_ULL(61));
+        g_assert_cmphex(result.frac_lo, ==, input.frac_lo);
+        g_assert_cmphex(get_float_exception_flags(&status), ==,
+                        float_flag_invalid | float_flag_invalid_snan);
+    }
+
+    float_status status = make_accrued_status(float_round_nearest_even);
+    FloatParts256 snan = {
+        .cls = float_class_snan, .sign = true, .frac_hi = BIT_ULL(61),
+        .frac_hm = 2, .frac_lm = 3, .frac_lo = 4,
+    };
+    FloatParts256 result;
+
+    set_default_nan_mode(false, &status);
+    set_float_3nan_prop_rule(float_3nan_prop_s_abc, &status);
+    result = parts256_muladd(&smaller, &snan, &smaller,
+                            float_muladd_negate_product, &status);
+    g_assert_cmpint(result.cls, ==, float_class_qnan);
+    g_assert_true(result.sign);
+    g_assert_cmphex(result.frac_hi, ==, BIT_ULL(62) | BIT_ULL(61));
+    g_assert_cmphex(result.frac_hm, ==, 2);
+    g_assert_cmphex(result.frac_lm, ==, 3);
+    g_assert_cmphex(result.frac_lo, ==, 4);
+    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                    float_flag_divbyzero | float_flag_invalid |
+                    float_flag_invalid_snan);
+}
+
+static void test_parts256_mul(void)
+{
+    /* Four-word products with 16 low input bits reserved for guard bits. */
+    static const struct {
+        uint64_t a[4], b[4], expected[4];
+        int exp;
+    } cases[] = {
+        {
+            .a = {
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffffffff),
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffff0000),
+            },
+            .b = {
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffffffff),
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffff0000),
+            },
+            .expected = {
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffffffff),
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xfffffffffffe0001),
+            },
+            .exp = 1,
+        }, {
+            .a = {
+                UINT64_C(0x8000000000000000), UINT64_C(0x0000000000000000),
+                UINT64_C(0x0000000000000000), UINT64_C(0x0000000000000000),
+            },
+            .b = {
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffffffff),
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffff0000),
+            },
+            .expected = {
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffffffff),
+                UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffff0000),
+            },
+            .exp = 0,
+        }, {
+            .a = {
+                UINT64_C(0xfedcba9876543210), UINT64_C(0x0123456789abcdef),
+                UINT64_C(0xffffffffffffffff), UINT64_C(0x0000000000000000),
+            },
+            .b = {
+                UINT64_C(0xabcdef0123456789), UINT64_C(0x0000000000000001),
+                UINT64_C(0xfedcba9876543210), UINT64_C(0xffffffffffff0000),
+            },
+            .expected = {
+                UINT64_C(0xab0a7556774f5602), UINT64_C(0x2f1d36778d794c18),
+                UINT64_C(0xce3dbe635dad524d), UINT64_C(0x344077d72e7bb1dd),
+            },
+            .exp = 1,
+        }, {
+            .a = {
+                UINT64_C(0xc000000000000000), UINT64_C(0x123456789abcdef0),
+                UINT64_C(0xfedcba9876543210), UINT64_C(0x0000000000000000),
+            },
+            .b = {
+                UINT64_C(0xc000000000000002), UINT64_C(0x0000000000000000),
+                UINT64_C(0xffffffffffffffff), UINT64_C(0x123456789abc0000),
+            },
+            .expected = {
+                UINT64_C(0x9000000000000001), UINT64_C(0x8da740da740da735),
+                UINT64_C(0xa38e38e38e38e36d), UINT64_C(0x5d950c83fb724311),
+            },
+            .exp = 1,
+        }, {
+            .a = {
+                UINT64_C(0xffffffffffffffff), UINT64_C(0x0000000000000001),
+                UINT64_C(0xffffffffffffffff), UINT64_C(0x0000000000000000),
+            },
+            .b = {
+                UINT64_C(0xaaaaaaaaaaaaaaaa), UINT64_C(0x5555555555555555),
+                UINT64_C(0xaaaaaaaaaaaaaaaa), UINT64_C(0x5555555555550000),
+            },
+            .expected = {
+                UINT64_C(0xaaaaaaaaaaaaaaa9), UINT64_C(0xaaaaaaaaaaaaaaac),
+                UINT64_C(0xaaaaaaaaaaaaaaa8), UINT64_C(0xaaaaaaaaaaaa5557),
+            },
+            .exp = 1,
+        }
+    };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(cases); i++) {
+        FloatParts256 a = {
+            .cls = float_class_normal, .sign = true, .exp = -13,
+            .frac_hi = cases[i].a[0], .frac_hm = cases[i].a[1],
+            .frac_lm = cases[i].a[2], .frac_lo = cases[i].a[3],
+        };
+        FloatParts256 b = {
+            .cls = float_class_normal, .exp = 13,
+            .frac_hi = cases[i].b[0], .frac_hm = cases[i].b[1],
+            .frac_lm = cases[i].b[2], .frac_lo = cases[i].b[3],
+        };
+
+        for (unsigned m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+            float_status status = make_accrued_status(all_rounding_modes[m]);
+            FloatParts256 result = parts256_mul(&a, &b, &status);
+
+            g_assert_cmpint(result.cls, ==, float_class_normal);
+            g_assert_true(result.sign);
+            g_assert_cmpint(result.exp, ==, cases[i].exp);
+            g_assert_cmphex(result.frac_hi, ==, cases[i].expected[0]);
+            g_assert_cmphex(result.frac_hm, ==, cases[i].expected[1]);
+            g_assert_cmphex(result.frac_lm, ==, cases[i].expected[2]);
+            g_assert_cmphex(result.frac_lo, ==, cases[i].expected[3]);
+            g_assert_cmphex(get_float_exception_flags(&status), ==,
+                            float_flag_divbyzero);
+        }
+    }
+}
+
+static void test_parts256_addsub(void)
+{
+    FloatParts128 maximum = uint128_unpack_canonical(
+        int128_make128(UINT64_MAX, UINT64_MAX));
+    FloatParts128 half = { .cls = float_class_normal, .exp = -1,
+                          .frac_hi = BIT_ULL(63) };
+    FloatParts128 power = { .cls = float_class_normal, .exp = 128,
+                           .frac_hi = BIT_ULL(63) };
+
+    for (unsigned m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+        FloatRoundMode rm = all_rounding_modes[m];
+        float_status status = make_accrued_status(rm);
+        FloatParts128 result = addsub256(
+            &maximum, &half, &status, false);
+        bool down = rm == float_round_to_zero || rm == float_round_down ||
+                    rm == float_round_to_odd || rm == float_round_to_odd_inf;
+        float128 packed;
+
+        g_assert_cmpint(result.exp, ==, 127);
+        g_assert_cmphex(result.frac_hi, ==, UINT64_MAX);
+        g_assert_cmphex(result.frac_lo, ==, UINT64_MAX);
+        packed = float128_round_pack_canonical(&result, &status);
+        g_assert_cmphex(packed.high, ==, down ? UINT64_C(0x407effffffffffff) :
+                                              UINT64_C(0x407f000000000000));
+        g_assert_cmphex(packed.low, ==, down ? UINT64_MAX : 0);
+        g_assert_cmphex(get_float_exception_flags(&status), ==,
+                        float_flag_divbyzero | float_flag_inexact);
+
+        status = make_accrued_status(rm);
+        result = addsub256(&maximum, &power, &status, true);
+        packed = float128_round_pack_canonical(&result, &status);
+        g_assert_cmphex(packed.high, ==, UINT64_C(0xbfff000000000000));
+        g_assert_cmphex(packed.low, ==, 0);
+        g_assert_cmphex(get_float_exception_flags(&status), ==,
+                        float_flag_divbyzero);
+
+        result = addsub256(&maximum, &maximum, &status, true);
+        g_assert_cmpint(result.cls, ==, float_class_zero);
+        g_assert_cmpint(result.sign, ==, rm == float_round_down);
+    }
+}
+
+static void test_parts256_muladd(void)
+{
+    FloatParts128 a = uint128_unpack_canonical(
+        int128_make128(UINT64_C(0xfffffffffffffffd),
+                       UINT64_C(0xbfffffffffffffff)));
+    FloatParts128 b = uint128_unpack_canonical(
+        int128_make128(3, UINT64_C(0xc000000000000000)));
+    FloatParts128 c = { .cls = float_class_normal, .exp = 3,
+                       .frac_hi = UINT64_C(0x8800000000000000) }; /* 8.5 */
+    FloatParts128 boundary = { .cls = float_class_normal, .sign = true,
+                              .exp = 255,
+                              .frac_hi = UINT64_C(0x9000000000000000) };
+
+    for (unsigned m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+        FloatRoundMode rm = all_rounding_modes[m];
+        float_status status = make_accrued_status(rm);
+        FloatParts128 result = muladd256(&a, &b, &c, 0, &status);
+        bool down = rm == float_round_to_zero || rm == float_round_down ||
+                    rm == float_round_to_odd || rm == float_round_to_odd_inf;
+        float128 packed;
+
+        g_assert_cmpint(result.exp, ==, 255);
+        g_assert_cmphex(result.frac_hi, ==, UINT64_C(0x8fffffffffffffff));
+        g_assert_cmphex(result.frac_lo, ==, UINT64_MAX);
+        packed = float128_round_pack_canonical(&result, &status);
+        g_assert_cmphex(packed.high, ==, down ? UINT64_C(0x40fe1fffffffffff) :
+                                              UINT64_C(0x40fe200000000000));
+        g_assert_cmphex(packed.low, ==, down ? UINT64_MAX : 0);
+        g_assert_cmphex(get_float_exception_flags(&status), ==,
+                        float_flag_divbyzero | float_flag_inexact);
+
+        status = make_accrued_status(rm);
+        result = muladd256(&a, &b, &boundary, 0, &status);
+        packed = float128_round_pack_canonical(&result, &status);
+        g_assert_cmphex(packed.high, ==, UINT64_C(0xc002200000000000)); /* -9 */
+        g_assert_cmphex(packed.low, ==, 0);
+        g_assert_cmphex(get_float_exception_flags(&status), ==,
+                        float_flag_divbyzero);
+    }
+}
+
+static void test_parts256_shift_boundaries(void)
+{
+    static const unsigned shifts[] = {
+        0, 1, 2, 63, 64, 65, 111, 112, 113, 114, 127, 128, 129,
+        191, 192, 193, 255, 256, 257, 319, 320, 321, 383, 384, 385,
+        447, 448, 449, 511, 512, 513, 1023, 1024, 1025,
+    };
+    const FloatParts256 one = {
+        .cls = float_class_normal, .frac_hi = BIT_ULL(63),
+    };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(shifts); i++) {
+        unsigned shift = shifts[i];
+
+        for (unsigned sign = 0; sign < 2; sign++) {
+            FloatParts256 large = one;
+            FloatParts256 small = one;
+
+            large.sign = small.sign = sign;
+            small.exp = -(int)shift;
+            for (unsigned m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+                FloatRoundMode rm = all_rounding_modes[m];
+                uint64_t high = UINT64_C(0x3fff000000000000), low = 0;
+
+                /* The exact magnitude is 1 + 2^-shift. */
+                if (shift == 0) {
+                    high = UINT64_C(0x4000000000000000);
+                } else if (shift <= 48) {
+                    high |= BIT_ULL(48 - shift);
+                } else if (shift <= 112) {
+                    low = BIT_ULL(112 - shift);
+                } else {
+                    low = rm == (sign ? float_round_down : float_round_up) ||
+                          rm == float_round_to_odd ||
+                          rm == float_round_to_odd_inf ||
+                          (rm == float_round_ties_away && shift == 113);
+                }
+                high |= (uint64_t)sign << 63;
+                for (unsigned op = 0; op < 3; op++) {
+                    float_status status = make_accrued_status(rm);
+                    FloatParts256 result;
+                    FloatParts128 narrow;
+                    float128 packed;
+
+                    if (op == 0) {
+                        result = parts256_addsub(&large, &small, &status,
+                                                false);
+                    } else if (op == 1) {
+                        result = parts256_muladd(&one, &large, &small, 0,
+                                                &status);
+                    } else {
+                        result = parts256_muladd(&one, &small, &large, 0,
+                                                &status);
+                    }
+                    narrow = parts256_to_parts128(&result);
+                    packed = float128_round_pack_canonical(&narrow, &status);
+                    g_assert_cmphex(packed.high, ==, high);
+                    g_assert_cmphex(packed.low, ==, low);
+                    g_assert_cmphex(get_float_exception_flags(&status), ==,
+                                    float_flag_divbyzero |
+                                    (shift > 112 ? float_flag_inexact : 0));
+                }
+            }
+        }
+    }
+}
+
+static void test_parts256_cancellation(void)
+{
+    /* (1 + 2^-i) * (1 - 2^-i) - 1 is exactly -2^(-2i). */
+    for (unsigned i = 1; i <= 239; i++) {
+        uint64_t a[4] = { BIT_ULL(63), 0, 0, 0 };
+        uint64_t b[4] = { 0 };
+        FloatParts256 left, right;
+
+        a[i / 64] |= BIT_ULL(63 - i % 64);
+        for (unsigned word = 0; word < ARRAY_SIZE(b); word++) {
+            if (i >= 64 * (word + 1)) {
+                b[word] = UINT64_MAX;
+            } else if (i > 64 * word) {
+                unsigned bits = i - 64 * word;
+
+                b[word] = MAKE_64BIT_MASK(64 - bits, bits);
+            }
+        }
+        left = (FloatParts256) {
+            .cls = float_class_normal, .frac_hi = a[0], .frac_hm = a[1],
+            .frac_lm = a[2], .frac_lo = a[3],
+        };
+        right = (FloatParts256) {
+            .cls = float_class_normal, .exp = -1,
+            .frac_hi = b[0], .frac_hm = b[1], .frac_lm = b[2], .frac_lo = b[3],
+        };
+
+        for (unsigned m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+            for (unsigned negate = 0; negate < 2; negate++) {
+                float_status status =
+                    make_accrued_status(all_rounding_modes[m]);
+                FloatParts256 addend = {
+                    .cls = float_class_normal, .sign = !negate,
+                    .frac_hi = BIT_ULL(63),
+                };
+                FloatParts256 result = parts256_muladd(
+                    &left, &right, &addend,
+                    negate ? float_muladd_negate_product : 0, &status);
+                FloatParts128 narrow = parts256_to_parts128(&result);
+                float128 packed = float128_round_pack_canonical(&narrow,
+                                                                &status);
+                uint64_t high = ((uint64_t)(16383 - 2 * i) << 48) |
+                                ((uint64_t)!negate << 63);
+
+                g_assert_cmphex(packed.high, ==, high);
+                g_assert_cmphex(packed.low, ==, 0);
+                g_assert_cmphex(get_float_exception_flags(&status), ==,
+                                float_flag_divbyzero);
+            }
+        }
+    }
+}
+
+static void test_parts256_special(void)
+{
+    const FloatParts128 values[] = {
+        { .cls = float_class_zero },
+        { .cls = float_class_zero, .sign = true },
+        { .cls = float_class_normal, .frac_hi = BIT_ULL(63) },
+        { .cls = float_class_normal, .sign = true, .frac_hi = BIT_ULL(63) },
+        { .cls = float_class_denormal, .frac_hi = BIT_ULL(63) },
+        { .cls = float_class_inf },
+        { .cls = float_class_inf, .sign = true },
+        { .cls = float_class_qnan, .frac_hi = BIT_ULL(62) },
+        { .cls = float_class_snan, .frac_hi = BIT_ULL(61) },
+    };
+
+    for (unsigned m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+        for (unsigned i = 0; i < ARRAY_SIZE(values); i++) {
+            for (unsigned j = 0; j < ARRAY_SIZE(values); j++) {
+                for (unsigned subtract = 0; subtract < 2; subtract++) {
+                    float_status s1 = make_accrued_status(
+                        all_rounding_modes[m]);
+                    float_status s2 = s1;
+                    FloatParts128 r1 = parts128_addsub(
+                        &values[i], &values[j], &s1, subtract);
+                    FloatParts128 r2 = addsub256(
+                        &values[i], &values[j], &s2, subtract);
+                    float128 p1 = float128_round_pack_canonical(&r1, &s1);
+                    float128 p2 = float128_round_pack_canonical(&r2, &s2);
+
+                    g_assert_cmphex(p1.high, ==, p2.high);
+                    g_assert_cmphex(p1.low, ==, p2.low);
+                    g_assert_cmphex(get_float_exception_flags(&s1), ==,
+                                    get_float_exception_flags(&s2));
+                }
+                for (unsigned k = 0; k < ARRAY_SIZE(values); k++) {
+                    for (unsigned flags = 0; flags < 16; flags++) {
+                        float_status s1 = make_accrued_status(
+                            all_rounding_modes[m]);
+                        float_status s2 = s1;
+                        FloatParts128 r1 = parts128_muladd(
+                            &values[i], &values[j], &values[k], flags, &s1);
+                        FloatParts128 r2 = muladd256(
+                            &values[i], &values[j], &values[k], flags, &s2);
+                        float128 p1 = float128_round_pack_canonical(&r1, &s1);
+                        float128 p2 = float128_round_pack_canonical(&r2, &s2);
+
+                        g_assert_cmphex(p1.high, ==, p2.high);
+                        g_assert_cmphex(p1.low, ==, p2.low);
+                        g_assert_cmphex(get_float_exception_flags(&s1), ==,
+                                        get_float_exception_flags(&s2));
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void test_parts256_ieee(void)
+{
+    GRand *random = g_rand_new_with_seed(0x3200512);
+
+    for (unsigned m = 0; m < ARRAY_SIZE(all_rounding_modes); m++) {
+        for (unsigned i = 0; i < 4096; i++) {
+            FloatParts128 operands[3];
+            float_status initial = make_accrued_status(all_rounding_modes[m]);
+
+            for (unsigned j = 0; j < ARRAY_SIZE(operands); j++) {
+                uint64_t hi = (uint64_t)g_rand_int(random) << 32 |
+                              g_rand_int(random);
+                uint64_t lo = (uint64_t)g_rand_int(random) << 32 |
+                              g_rand_int(random);
+
+                operands[j] = float128_unpack_canonical(
+                    make_float128(hi, lo), &initial);
+            }
+            for (unsigned op = 0; op < 2; op++) {
+                float_status s1 = initial, s2 = initial;
+                FloatParts128 r1, r2;
+                float128 p1, p2;
+
+                if (op) {
+                    r1 = parts128_muladd(&operands[0], &operands[1],
+                                         &operands[2], i % 4, &s1);
+                    r2 = muladd256(&operands[0], &operands[1],
+                                    &operands[2], i % 4, &s2);
+                } else {
+                    r1 = parts128_addsub(&operands[0], &operands[1],
+                                         &s1, i % 2);
+                    r2 = addsub256(&operands[0], &operands[1], &s2, i % 2);
+                }
+                p1 = float128_round_pack_canonical(&r1, &s1);
+                p2 = float128_round_pack_canonical(&r2, &s2);
+                g_assert_cmphex(p1.high, ==, p2.high);
+                g_assert_cmphex(p1.low, ==, p2.low);
+                g_assert_cmphex(get_float_exception_flags(&s1), ==,
+                                get_float_exception_flags(&s2));
+            }
+        }
+    }
+    g_rand_free(random);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -1505,5 +2103,20 @@ int main(int argc, char **argv)
                     test_int128_float128_rounding);
     g_test_add_func("/softfloat/int128/reference", test_int128_reference);
     g_test_add_func("/softfloat/int128/canonical", test_int128_canonical);
+    g_test_add_func("/softfloat/parts256/addsub",
+                    test_parts256_addsub);
+    g_test_add_func("/softfloat/parts256/muladd",
+                    test_parts256_muladd);
+    g_test_add_func("/softfloat/parts256/special",
+                    test_parts256_special);
+    g_test_add_func("/softfloat/parts256/ieee", test_parts256_ieee);
+    g_test_add_func("/softfloat/parts256/conversions",
+                    test_parts256_conversions);
+    g_test_add_func("/softfloat/parts256/nan", test_parts256_nan);
+    g_test_add_func("/softfloat/parts256/mul", test_parts256_mul);
+    g_test_add_func("/softfloat/parts256/shift-boundaries",
+                    test_parts256_shift_boundaries);
+    g_test_add_func("/softfloat/parts256/cancellation",
+                    test_parts256_cancellation);
     return g_test_run();
 }

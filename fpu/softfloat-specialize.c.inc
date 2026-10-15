@@ -179,6 +179,21 @@ FloatParts128 parts128_default_nan(float_status *status)
     };
 }
 
+FloatParts256 parts256_default_nan(float_status *status)
+{
+    FloatParts128 p128 = parts128_default_nan(status);
+
+    return (FloatParts256) {
+        .cls = float_class_qnan,
+        .sign = p128.sign,
+        .exp = INT_MAX,
+        .frac_hi = p128.frac_hi,
+        .frac_hm = p128.frac_lo,
+        .frac_lm = p128.frac_lo,
+        .frac_lo = p128.frac_lo,
+    };
+}
+
 /*----------------------------------------------------------------------------
 | Returns a quiet NaN from a signalling NaN for the deconstructed
 | floating-point parts.
@@ -216,6 +231,16 @@ static FloatParts128 parts128_silence_nan(const FloatParts128 *p,
                                           float_status *status)
 {
     FloatParts128 r = *p;
+
+    r.frac_hi = parts_silence_nan_frac(r.frac_hi, status);
+    r.cls = float_class_qnan;
+    return r;
+}
+
+static FloatParts256 parts256_silence_nan(const FloatParts256 *p,
+                                          float_status *status)
+{
+    FloatParts256 r = *p;
 
     r.frac_hi = parts_silence_nan_frac(r.frac_hi, status);
     r.cls = float_class_qnan;

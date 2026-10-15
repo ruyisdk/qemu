@@ -435,16 +435,20 @@ static void record_denormals_used(int mask, float_status *s)
     }
 }
 
-/* FloatParts256 is entirely internal, for parts128_mul* */
+/* FloatParts512 is internal, for parts256_mul* and fused addition. */
 typedef struct {
     FloatClass cls;
     bool sign;
     int32_t exp;
-    uint64_t frac_hi;
-    uint64_t frac_hm;  /* high-middle */
-    uint64_t frac_lm;  /* low-middle */
-    uint64_t frac_lo;
-} FloatParts256;
+    union {
+        uint64_t frac[8];
+        struct {
+            uint64_t frac_hi;
+            uint64_t frac_mid[6];
+            uint64_t frac_lo;
+        };
+    };
+} FloatParts512;
 
 /*
  * Minimum and maximum exponent for scalbn.
@@ -689,6 +693,24 @@ static FloatRelation frac128_cmp(const FloatParts128 *a, const FloatParts128 *b)
     return ta < tb ? float_relation_less : float_relation_greater;
 }
 
+static FloatRelation frac256_cmp(const FloatParts256 *a, const FloatParts256 *b)
+{
+    const uint64_t a_words[] = {
+        a->frac_hi, a->frac_hm, a->frac_lm, a->frac_lo,
+    };
+    const uint64_t b_words[] = {
+        b->frac_hi, b->frac_hm, b->frac_lm, b->frac_lo,
+    };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(a_words); i++) {
+        if (a_words[i] != b_words[i]) {
+            return a_words[i] < b_words[i] ? float_relation_less :
+                                            float_relation_greater;
+        }
+    }
+    return float_relation_equal;
+}
+
 static void frac64_clear(FloatParts64 *a)
 {
     a->frac = 0;
@@ -799,6 +821,42 @@ static void frac128_mulw(FloatParts256 *r,
 {
     mul128To256(a->frac_hi, a->frac_lo, b->frac_hi, b->frac_lo,
                 &r->frac_hi, &r->frac_hm, &r->frac_lm, &r->frac_lo);
+}
+
+static void frac256_mulw(FloatParts512 *r,
+                         const FloatParts256 *a, const FloatParts256 *b)
+{
+    /* Zero-extended 128-bit operands need only a 128 x 128 multiply. */
+    if (!(a->frac_lm | a->frac_lo | b->frac_lm | b->frac_lo)) {
+        mul128To256(a->frac_hi, a->frac_hm, b->frac_hi, b->frac_hm,
+                    &r->frac[0], &r->frac[1], &r->frac[2], &r->frac[3]);
+        memset(&r->frac[4], 0, sizeof(r->frac) / 2);
+        return;
+    }
+
+    const uint64_t a_words[] = {
+        a->frac_lo, a->frac_lm, a->frac_hm, a->frac_hi,
+    };
+    const uint64_t b_words[] = {
+        b->frac_lo, b->frac_lm, b->frac_hm, b->frac_hi,
+    };
+
+    memset(r->frac, 0, sizeof(r->frac));
+    for (unsigned i = 0; i < ARRAY_SIZE(a_words); i++) {
+        uint64_t carry = 0;
+
+        for (unsigned j = 0; j < ARRAY_SIZE(b_words); j++) {
+            unsigned pos = ARRAY_SIZE(r->frac) - 1 - i - j;
+            uint64_t lo, hi;
+
+            mulu64(&lo, &hi, a_words[i], b_words[j]);
+            hi += uadd64_overflow(lo, carry, &lo);
+            hi += uadd64_overflow(lo, r->frac[pos], &lo);
+            r->frac[pos] = lo;
+            carry = hi;
+        }
+        r->frac[ARRAY_SIZE(r->frac) - 1 - i - ARRAY_SIZE(b_words)] = carry;
+    }
 }
 
 static void frac64_neg(FloatParts64 *a)
@@ -1245,6 +1303,19 @@ static void frac128_truncjam(FloatParts128 *r, const FloatParts256 *a)
     r->frac_lo = a->frac_hm | ((a->frac_lm | a->frac_lo) != 0);
 }
 
+static void frac256_truncjam(FloatParts256 *r, const FloatParts512 *a)
+{
+    uint64_t sticky = 0;
+
+    for (unsigned i = 4; i < ARRAY_SIZE(a->frac); i++) {
+        sticky |= a->frac[i];
+    }
+    r->frac_hi = a->frac[0];
+    r->frac_hm = a->frac[1];
+    r->frac_lm = a->frac[2];
+    r->frac_lo = a->frac[3] | (sticky != 0);
+}
+
 static void frac64_widen(FloatParts128 *r, const FloatParts64 *a)
 {
     r->frac_hi = a->frac;
@@ -1257,6 +1328,97 @@ static void frac128_widen(FloatParts256 *r, const FloatParts128 *a)
     r->frac_hm = a->frac_lo;
     r->frac_lm = 0;
     r->frac_lo = 0;
+}
+
+static void frac256_widen(FloatParts512 *r, const FloatParts256 *a)
+{
+    memset(r->frac, 0, sizeof(r->frac));
+    r->frac[0] = a->frac_hi;
+    r->frac[1] = a->frac_hm;
+    r->frac[2] = a->frac_lm;
+    r->frac[3] = a->frac_lo;
+}
+
+static bool frac512_add(FloatParts512 *r,
+                        const FloatParts512 *a, const FloatParts512 *b)
+{
+    bool carry = false;
+
+    for (int i = ARRAY_SIZE(r->frac) - 1; i >= 0; i--) {
+        r->frac[i] = uadd64_carry(a->frac[i], b->frac[i], &carry);
+    }
+    return carry;
+}
+
+static bool frac512_sub(FloatParts512 *r,
+                        const FloatParts512 *a, const FloatParts512 *b)
+{
+    bool borrow = false;
+
+    for (int i = ARRAY_SIZE(r->frac) - 1; i >= 0; i--) {
+        r->frac[i] = usub64_borrow(a->frac[i], b->frac[i], &borrow);
+    }
+    return borrow;
+}
+
+static void frac512_neg(FloatParts512 *a)
+{
+    bool borrow = false;
+
+    for (int i = ARRAY_SIZE(a->frac) - 1; i >= 0; i--) {
+        a->frac[i] = usub64_borrow(0, a->frac[i], &borrow);
+    }
+}
+
+static int frac512_normalize(FloatParts512 *a)
+{
+    unsigned words, bits;
+
+    for (words = 0; words < ARRAY_SIZE(a->frac); words++) {
+        if (a->frac[words]) {
+            break;
+        }
+    }
+    if (words == ARRAY_SIZE(a->frac)) {
+        return 512;
+    }
+    bits = clz64(a->frac[words]);
+    for (unsigned i = 0; i < ARRAY_SIZE(a->frac); i++) {
+        unsigned src = i + words;
+        uint64_t next = src + 1 < ARRAY_SIZE(a->frac) ? a->frac[src + 1] : 0;
+
+        a->frac[i] = src < ARRAY_SIZE(a->frac) ?
+            shl_double(a->frac[src], next, bits) : 0;
+    }
+    return words * 64 + bits;
+}
+
+static void frac512_shrjam(FloatParts512 *a, int shift)
+{
+    unsigned words = MIN(shift / 64, ARRAY_SIZE(a->frac));
+    unsigned bits = shift % 64;
+    uint64_t sticky = 0;
+
+    for (unsigned i = ARRAY_SIZE(a->frac) - words;
+         i < ARRAY_SIZE(a->frac); i++) {
+        sticky |= a->frac[i];
+    }
+    if (words == ARRAY_SIZE(a->frac)) {
+        memset(a->frac, 0, sizeof(a->frac));
+    } else {
+        if (bits) {
+            sticky |= a->frac[ARRAY_SIZE(a->frac) - words - 1] << (64 - bits);
+        }
+        for (int i = ARRAY_SIZE(a->frac) - 1; i >= 0; i--) {
+            uint64_t value = i >= words ? a->frac[i - words] >> bits : 0;
+
+            if (bits && i > words) {
+                value |= a->frac[i - words - 1] << (64 - bits);
+            }
+            a->frac[i] = value;
+        }
+    }
+    a->frac_lo |= sticky != 0;
 }
 
 /*
@@ -1290,11 +1452,19 @@ static const uint16_t rsqrt_tab[128] = {
 #define FloatPartsN    glue(FloatParts,N)
 #define FloatPartsW    glue(FloatParts,W)
 
-#define N 256
+#define N 512
 
 #include "softfloat-parts-addsub.c.inc"
 
 #undef  N
+#define N 256
+#define W 512
+
+#include "softfloat-parts-addsub.c.inc"
+#include "softfloat-parts-arith.c.inc"
+
+#undef  N
+#undef  W
 #define N 128
 #define W 256
 
@@ -1317,6 +1487,32 @@ static const uint16_t rsqrt_tab[128] = {
 #undef  partsW
 #undef  FloatPartsN
 #undef  FloatPartsW
+
+FloatParts256 parts128_to_parts256(const FloatParts128 *a)
+{
+    FloatParts256 r = { .cls = a->cls, .sign = a->sign };
+
+    if (is_anynorm(a->cls)) {
+        r.exp = a->exp;
+    }
+    if (is_anynorm(a->cls) || is_nan(a->cls)) {
+        frac128_widen(&r, a);
+    }
+    return r;
+}
+
+FloatParts128 parts256_to_parts128(const FloatParts256 *a)
+{
+    FloatParts128 r = { .cls = a->cls, .sign = a->sign };
+
+    if (is_anynorm(a->cls)) {
+        r.exp = a->exp;
+    }
+    if (is_anynorm(a->cls) || is_nan(a->cls)) {
+        frac128_truncjam(&r, a);
+    }
+    return r;
+}
 
 /*
  * Pack/unpack routines with a specific FloatFmt.
